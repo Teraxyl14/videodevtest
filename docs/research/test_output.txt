@@ -1,0 +1,62 @@
+Set QWEN_MODEL_PATH = models/Qwen2-VL-2B-Instruct
+Testing VLM Extraction...
+GPU: NVIDIA GeForce RTX 5080 Laptop GPU
+VRAM: 15.92 GB
+Using video: output/How did they fit an entire PC in this - HP  CES 2026 - ShortCircuit (1080p, h264, youtube)_20260125_110246/short_01_Opening_segment/video.mp4
+Initializing Analyzer (load_in_4bit=False)...
+[Qwen3-VL] Initializing (4-bit: False, device: cuda)
+Analyzing...
+[Qwen3-VL] Loading models/Qwen2-VL-2B-Instruct...
+[Debug] CUDA Available: True
+[Debug] Device Count: 1
+[Debug] Current Device: NVIDIA GeForce RTX 5080 Laptop GPU
+/usr/local/lib/python3.12/dist-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:09<00:09,  9.11s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:10<00:00,  4.36s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:10<00:00,  5.07s/it]
+The image processor of type `Qwen2VLImageProcessor` is now loaded as a fast processor by default, even if the model checkpoint was saved with a slow processor. This is a breaking change and may produce slightly different outputs. To continue using the slow processor, instantiate this class with `use_fast=False`. Note that this behavior will be extended to all models in a future release.
+[Qwen3-VL] Model loaded successfully
+[Qwen3-VL] Analyzing: video.mp4
+[Qwen3-VL] Video: 30.0s, 29.97 fps
+[Qwen3-VL] Extracted 4 frames from 30.0s video
+[Qwen3-VL] Running inference...
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+[Qwen3-VL] Response received (1470 chars)
+[Qwen3-VL] Successfully parsed 3 moments
+
+=== Analysis Result (JSON) ===
+{
+  "video_path": "output/How did they fit an entire PC in this - HP  CES 2026 - ShortCircuit (1080p, h264, youtube)_20260125_110246/short_01_Opening_segment/video.mp4",
+  "duration": 30.03356,
+  "viral_moments": [
+    {
+      "start_time": 0.0,
+      "end_time": 10.0,
+      "hook": "The man is holding a laptop and pointing to the keyboard, suggesting a discussion about the keyboard.",
+      "reason": "This moment could be a good starting point for a short-form video as it sets the tone for the content.",
+      "viral_score": 0.5
+    },
+    {
+      "start_time": 10.0,
+      "end_time": 20.0,
+      "hook": "The man is now holding the keyboard, possibly demonstrating its features or features.",
+      "reason": "This moment could be a good follow-up to the previous one, as it continues the discussion about the keyboard.",
+      "viral_score": 0.5
+    },
+    {
+      "start_time": 20.0,
+      "end_time": 29.9,
+      "hook": "The man is now holding the keyboard in front of a computer monitor, possibly showing how it works with a computer.",
+      "reason": "This moment could be a good conclusion to the video, as it ties back to the initial topic of the laptop and keyboard.",
+      "viral_score": 0.5
+    }
+  ],
+  "overall_theme": "The video focuses on the keyboard and its features.",
+  "target_audience": "People interested in technology, specifically keyboards and laptops."
+}
+
+=== SUCCESS ===
+Viral moments identified: 3
+- The man is holding a laptop and pointing to the keyboard, suggesting a discussion about the keyboard. (0.0-10.0s) Score: 0.5
+- The man is now holding the keyboard, possibly demonstrating its features or features. (10.0-20.0s) Score: 0.5
+- The man is now holding the keyboard in front of a computer monitor, possibly showing how it works with a computer. (20.0-29.9s) Score: 0.5

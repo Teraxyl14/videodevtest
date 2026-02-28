@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Pipeline — Dashboard</title>
+    <meta name="description" content="Real-time monitoring and control for the Autonomous Trend Agent video pipeline">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body>
+    <!-- ===== HEADER ===== -->
+    <header id="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">▶</span>
+                <h1>AI Video Pipeline</h1>
+            </div>
+            <span class="version-badge">v2.0 — Golden Stack</span>
+        </div>
+        <div class="header-right">
+            <div id="gpu-badge" class="status-badge offline" title="GPU Status">
+                <span class="badge-dot"></span>
+                <span class="badge-text">GPU Offline</span>
+            </div>
+            <div id="ws-badge" class="status-badge offline" title="WebSocket Connection">
+                <span class="badge-dot"></span>
+                <span class="badge-text">Disconnected</span>
+            </div>
+        </div>
+    </header>
+
+    <main id="app-main">
+        <!-- ===== LEFT COLUMN: Controls + Phases ===== -->
+        <section class="col-left">
+
+            <!-- Pipeline Control Panel -->
+            <div class="card" id="control-panel">
+                <div class="card-header">
+                    <h2>Pipeline Control</h2>
+                    <span id="pipeline-state" class="state-chip idle">IDLE</span>
+                </div>
+                <div class="card-body">
+                    <!-- Video Selector -->
+                    <div class="form-group">
+                        <label for="video-select">Source</label>
+                        <select id="video-select">
+                            <option value="/app/downloaded_videos">📁 All Downloaded Videos</option>
+                        </select>
+                        <button id="btn-refresh-videos" class="btn-icon" title="Refresh list">⟳</button>
+                    </div>
+
+                    <!-- Custom Path Input -->
+                    <div class="form-group">
+                        <label for="custom-path">Or enter custom path</label>
+                        <input type="text" id="custom-path" placeholder="/app/downloaded_videos/my_video.mp4">
+                    </div>
+
+                    <!-- Shorts Count -->
+                    <div class="form-group inline">
+                        <label for="num-shorts">Shorts</label>
+                        <input type="number" id="num-shorts" value="4" min="1" max="8">
+                    </div>
+
+                    <!-- Feature Toggles -->
+                    <div class="toggles-row">
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-captions" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Captions</span>
+                        </label>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-effects" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Effects</span>
+                        </label>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-tracking" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Tracking</span>
+                        </label>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-analysis" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">AI Analysis</span>
+                        </label>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="actions-row">
+                        <button id="btn-start" class="btn btn-primary">
+                            <span class="btn-icon-left">▶</span> Start Pipeline
+                        </button>
+                        <button id="btn-pause" class="btn btn-secondary" disabled>
+                            <span class="btn-icon-left">⏸</span><span class="btn-label">Pause</span>
+                        </button>
+                        <button id="btn-stop" class="btn btn-danger" disabled>
+                            <span class="btn-icon-left">■</span> Kill
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Overall Progress -->
+            <div class="card" id="overall-progress-card">
+                <div class="card-header compact">
+                    <h2>Overall Progress</h2>
+                    <span id="overall-pct" class="pct-label">0%</span>
+                </div>
+                <div class="progress-bar-container large">
+                    <div id="overall-bar" class="progress-bar" style="width: 0%"></div>
+                </div>
+                <div class="progress-meta">
+                    <span id="elapsed-time">Elapsed: --</span>
+                    <span id="eta-time">ETA: --</span>
+                </div>
+            </div>
+
+            <!-- Pipeline Phases -->
+            <div class="card" id="phases-card">
+                <div class="card-header">
+                    <h2>Pipeline Phases</h2>
+                </div>
+                <div class="phases-list">
+                    <div class="phase" data-phase="Transcription">
+                        <div class="phase-header">
+                            <span class="phase-icon">🎤</span>
+                            <span class="phase-name">Transcription</span>
+                            <span class="phase-status pending">Pending</span>
+                            <span class="phase-pct">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <div class="phase-detail"></div>
+                    </div>
+                    <div class="phase" data-phase="Video Analysis">
+                        <div class="phase-header">
+                            <span class="phase-icon">🧠</span>
+                            <span class="phase-name">Visual Analysis</span>
+                            <span class="phase-status pending">Pending</span>
+                            <span class="phase-pct">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <div class="phase-detail"></div>
+                    </div>
+                    <div class="phase" data-phase="Tracking">
+                        <div class="phase-header">
+                            <span class="phase-icon">👁️</span>
+                            <span class="phase-name">Face Tracking</span>
+                            <span class="phase-status pending">Pending</span>
+                            <span class="phase-pct">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <div class="phase-detail"></div>
+                    </div>
+                    <div class="phase" data-phase="Editing">
+                        <div class="phase-header">
+                            <span class="phase-icon">✂️</span>
+                            <span class="phase-name">Editing & Reframing</span>
+                            <span class="phase-status pending">Pending</span>
+                            <span class="phase-pct">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <div class="phase-detail"></div>
+                    </div>
+                    <div class="phase" data-phase="Export">
+                        <div class="phase-header">
+                            <span class="phase-icon">📦</span>
+                            <span class="phase-name">Export & Metadata</span>
+                            <span class="phase-status pending">Pending</span>
+                            <span class="phase-pct">0%</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" style="width: 0%"></div>
+                        </div>
+                        <div class="phase-detail"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Utilization -->
+            <div class="card" id="system-card">
+                <div class="card-header">
+                    <h2>System Utilization</h2>
+                </div>
+                <div class="system-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">GPU</div>
+                        <div class="stat-bar-wrap">
+                            <div id="gpu-util-bar" class="stat-bar" style="width: 0%"></div>
+                        </div>
+                        <span id="gpu-util-text" class="stat-value">--%</span>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">VRAM</div>
+                        <div class="stat-bar-wrap">
+                            <div id="vram-bar" class="stat-bar vram" style="width: 0%"></div>
+                        </div>
+                        <span id="vram-text" class="stat-value">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">RAM</div>
+                        <div class="stat-bar-wrap">
+                            <div id="ram-bar" class="stat-bar ram" style="width: 0%"></div>
+                        </div>
+                        <span id="ram-text" class="stat-value">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">GPU Temp</div>
+                        <span id="gpu-temp-text" class="stat-value temp">--°C</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== RIGHT COLUMN: Log + Outputs ===== -->
+        <section class="col-right">
+
+            <!-- Live Log -->
+            <div class="card" id="log-card">
+                <div class="card-header">
+                    <h2>Live Log</h2>
+                    <button id="btn-clear-log" class="btn-sm">Clear</button>
+                </div>
+                <div id="log-output" class="log-output">
+                    <div class="log-line system">Dashboard ready. Connect a pipeline to see progress.</div>
+                </div>
+            </div>
+
+            <!-- Previous Generations -->
+            <div class="card" id="outputs-card">
+                <div class="card-header">
+                    <h2>Previous Generations</h2>
+                    <button id="btn-refresh-outputs" class="btn-sm">Refresh</button>
+                </div>
+                <div id="outputs-list" class="outputs-list">
+                    <div class="empty-state">No outputs yet. Run the pipeline to generate shorts.</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

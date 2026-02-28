@@ -1,0 +1,307 @@
+﻿Engineering the "Viral" Short: A Computational Framework for Retention Optimization in 2026
+1. Introduction: The Deterministic Era of Content Creation
+The landscape of digital media in 2026 has transitioned from an era of stochastic creativity to one of deterministic retention engineering. For over a decade, the "viral" video was viewed as an alchemical product of luck, timing, and nebulous "quality." However, the maturation of algorithmic recommendation systems—specifically the session-based reinforcement learning models employed by TikTok, Instagram Reels, and YouTube Shorts—has fundamentally demystified this process. Virality is no longer a random event; it is the predictable output of a content system that successfully minimizes cognitive load while maximizing information density per second. The creators who dominate the attention economy in the mid-2020s, exemplified by the operational scale of MrBeast and the content density of Alex Hormozi, do not merely "edit" video; they engineer attention. They treat the video timeline not as a narrative arc, but as a sequence of data points—visual stimuli, auditory triggers, and semantic hooks—optimized to arrest the viewer’s scroll and sustain neural engagement through granular retention checkpoints.
+This report serves as a comprehensive technical and creative deconstruction of the "Viral Short." It aims to bridge the significant gap between high-level creative principles and executable code. While creative strategy is well-documented, the automated execution of these strategies—specifically regarding perceptual synchronization, intelligent cinematography, and dynamic pacing—remains technically deficient in most automated pipelines. By mapping the neuro-cinematic patterns of top-tier content to specific algorithms in Computer Vision (CV) and Digital Signal Processing (DSP), we define the architecture for a "Viral Engine." This engine utilizes Python-based logic, FFmpeg rendering, and advanced machine learning models to transform raw footage into high-retention vertical assets, moving the industry from the manual art of cutting video to the automated science of engineering retention.
+2. The Anatomy of Retention: Deconstructing the Viral Formula
+To engineer retention, one must first quantify the creative decisions that drive algorithmic favor. Analysis of the top 1% of educational and storytelling shorts reveals a convergence toward hyper-optimized pacing and rigid visual hierarchy. The data suggests that "style" has largely homogenized into a functional syntax designed to exploit the human brain's orientation response—the reflex that compels attention toward new or changing stimuli.
+2.1 The Neuro-Cinematics of Pacing and the "Rule of Six"
+The pacing of short-form content has accelerated dramatically, driven by the narrowing window of viewer patience. Historical analysis of cinema shows a gradual decrease in Average Shot Length (ASL) over the last century, but the shift in vertical short-form video represents a quantum leap. Analysis of high-performing content, such as that produced by the MrBeast team, reveals an ASL hovering around 1.6 seconds.1 This creates a visual rhythm of approximately 38 cuts per minute, a frequency that effectively short-circuits the brain's habituation mechanisms. When the visual field changes every 1.5 to 2 seconds, the viewer’s brain is forced to continuously re-process the scene, maintaining a state of heightened alertness that prevents the "scroll reflex."
+This hyper-pacing is often governed by a modern adaptation of Walter Murch’s "Rule of Six," reinterpreted for the vertical screen.3 While emotion and story remain paramount, the 2026 adaptation prioritizes "Rhythm" and "Eye Trace" significantly higher than traditional cinema. In the vertical format, where the viewer's foveal focus is locked to the center of the screen, rhythm is dictated not just by cuts, but by the frequency of "semantic events"—text overlays, zooms, sound effects, or motion graphics. A video may hold a single camera shot for five seconds, but if a subtitle pops in every 0.3 seconds and a digital zoom occurs at second 2, the perceived ASL is much lower than the actual ASL. This distinction is critical for educational content, where rapid cutting can disrupt information retention. The "Viral Formula" thus relies on keeping the Visual Event Frequency (VEF) above 0.5Hz (one event every two seconds) regardless of the cut rate.4
+2.2 The "Hook, Retain, Reward" Structural Model
+The structural architecture of a viral short is rigid, adhering to a "Hook, Retain, Reward" framework that aligns perfectly with the drop-off curves observed in retention analytics.5
+Table 1: The Viral Structural Framework and Retention Targets
+
+
+Phase
+	Timeframe
+	Objective
+	Retention Target
+	Key Technical Element
+	The Hook
+	0:00 – 0:03
+	Stop the Scroll
+	> 70% at 0:03
+	Pattern Interrupt: Immediate motion or high-contrast text. No fade-ins. 4
+	The Retain
+	0:03 – End
+	Sustain Attention
+	> 60% completion
+	Concept Compression: Silence truncation, 1.5x playback speed on action. 4
+	The Reward
+	Final 3s
+	Satisfy & Loop
+	> 1.2x plays
+	Perfect Loop: Seamless audio/video transition from end to start. 6
+	The Hook (0-3 seconds) is the single most deterministic factor in a video's success. Data indicates that 50-60% of all viewer drop-off occurs within this window.4 Consequently, the engineering of the hook requires "Pattern Interrupts"—visual or auditory anomalies that break the inertia of the feed. This often involves a "Cold Open" where the video starts in the middle of an action or a sentence, or employs a high-contrast title card that promises immediate value (e.g., "Stop wasting money on ads" 5). Technically, this necessitates the removal of all "introductory" frames; the first frame must be the point of highest tension.
+The Retain phase relies on "Concept Compression." This editing philosophy dictates that any frame not conveying new information is waste. This leads to the aggressive removal of pauses, filler words ("um," "ah"), and the acceleration of B-roll footage. Creators like Alex Hormozi utilize this by creating a "Wall of Sound," ensuring that silence never touches the noise floor.3 The audio track is compressed and normalized to maintain high energy, ensuring that even if the viewer looks away, the auditory hook remains engaged.
+The Reward phase is the payoff, but in 2026, it is engineered to trigger a re-watch. The "Perfect Loop" technique involves scripting the video such that the last sentence flows syntactically into the first. For example, if the video starts with "Here is why...", the video ends with "...and that is the reason." This circular narrative tricks the algorithm by artificially inflating the "Average Percentage Viewed" (APV) metric, often pushing it above 100%, which is a strong signal for viral distribution.6
+2.3 Visual Hierarchy: The Foveal Tunnel
+Eye-tracking studies on vertical platforms have identified a distinct viewing pattern unlike the "Z-pattern" or "F-pattern" of desktop web browsing. On TikTok and Reels, attention is funneled into a "Foveal Tunnel" located in the center-middle of the screen.7 Peripheral vision is largely ignored due to the cognitive load of the endless scroll.
+This biological constraint dictates the placement of all critical assets. The "Dead Zones"—the top 15% and bottom 20% of the screen—are overlaid with platform UI elements (search bars, captions, like buttons, share icons).8 Placing a face, a text hook, or a crucial visual element in these zones guarantees a reduction in engagement. Conversely, the "Hot Zone" (pixels 450–1150 on a 1920-height canvas) receives the vast majority of fixation time. Engineering a viral short requires a rigorous adherence to these safe zones, ensuring that the primary subject and the subtitles fight for dominance only within this central arena. The "30% Face" rule suggests that for human-centric content, the speaker's face must occupy at least 30% of this hot zone to establish the parasocial connection necessary for trust.4
+3. Addressing Technical Deficits: The Engineering of Presence
+While the creative principles of retention are well-understood by top editors, the automated tools available to the average creator often fail to execute them effectively. "Auto-editing" software frequently produces results that feel robotic or "uncanny." To bridge the gap between "cutting video" and "engineering retention," we must address three specific technical deficits: the perceptual latency of subtitles, the loss of context in vertical reframing, and the mismanagement of content density.
+3.1 Subtitle Sync & Presence: The Physics of the "Pop-In"
+In the "silent scroll" environment of social media, subtitles are not merely accessibility tools; they are the primary retention anchor. However, standard synchronization methods—aligning the text start time exactly with the audio start time—fail to account for human neurobiology, resulting in captions that feel perceptually "late."
+3.1.1 The Perceptual Offset Problem
+The issue stems from the difference between acoustic onset and perceptual processing. When a word is spoken, the waveform may show energy at time   , but the "Perceptual Center" (P-center)—the moment the listener identifies the beat of the syllable—often occurs 10-50ms later.9 Conversely, the visual cortex requires approximately 100-200ms to detect, saccade to, and decode a visual text stimulus. If the subtitle appears at the exact moment the audio is heard (  ), the brain receives the audio signal before it has finished decoding the text. This dissonance creates a feeling of lag.
+To solve this, we must implement a Negative Perceptual Offset (NPO). Technical analysis suggests that subtitles should appear 50ms to 100ms before the phonetic onset of the corresponding audio.10 This "lead-in" allows the eye to saccade to the text and begin the decoding process just as the sound arrives at the auditory cortex. When these two distinct neural events—visual decoding and auditory recognition—sync up in the brain, the experience feels "instantaneous" and highly engaging. This phenomenon utilizes the brain's predictive coding mechanisms; seeing the word primes the auditory cortex to hear it, and the arrival of the sound validates the prediction, generating a micro-reward of dopamine.11
+3.1.2 Font Engineering and Animation Physics
+The aesthetic of the viral subtitle—popularized by Hormozi—is defined by its aggression. It does not ask to be read; it demands it. This requires specific font engineering. The standard "viral" font stack includes typefaces like The Bold Font, Montserrat ExtraBold, or Komika Axis—fonts with thick strokes that survive video compression artifacts.13
+Size matters critically. To dominate the "Hot Zone," captions should be rendered at font sizes relative to the screen height. For a 1080x1920 canvas, a font size of 60pt to 80pt is optimal, ensuring legibility even on small mobile screens.15 However, static text is insufficient for high retention. The text must mimic the physics of an impact. This is achieved through "Pop-in" animation, where the text scales from 80% to 110% over a rapid duration (e.g., 50ms) before settling at 100%. This elastic movement adds kinetic energy to the video, contributing to the Visual Event Frequency (VEF) even when the camera shot is static.16
+Current tools like FFmpeg's drawtext filter are ill-equipped for this level of complex animation due to performance bottlenecks and limited styling capabilities.17 The superior solution is the Advanced Substation Alpha (.ass) subtitle format, which supports programmed vector transformations and karaoke timing tags (\k). The .ass format allows for granular control over the scaling, rotation, and color of individual syllables, enabling the "Karaoke Effect" where the active word changes color (e.g., to bright yellow) in perfect sync with the audio, guiding the viewer's eye through the sentence.18
+3.2 Intelligent Reframing: The "Cinematic Crop"
+Converting high-quality 16:9 (landscape) footage into 9:16 (vertical) shorts presents a severe computer vision challenge. A static center crop often decapitates the subject or misses the action entirely. The "30% Face" issue refers to the failure mode where the subject is either too small to be engaging or is cropped awkwardly, breaking the parasocial connection. To solve this, we require a "Virtual Cinematographer" driven by Active Speaker Detection (ASD) and Kalman Filtering.
+3.2.1 Active Speaker Detection (ASD)
+Simple face detection is inadequate for multi-person podcasts or interviews. The system must know who is talking to reframe the shot correctly. The current state-of-the-art model for this task is TalkNet.19 Unlike simpler models that rely solely on lip motion, TalkNet utilizes an audio-visual cross-attention mechanism. It ingests both the video frames (visual stream) and the audio MFCCs (Mel-frequency cepstral coefficients) (audio stream) and assesses the correlation between the two over a temporal window.
+TalkNet is preferred over alternatives like Pyannote-audio for video-centric pipelines because it is explicitly designed for the visual domain, providing a probability score    for every detected face in the frame. By analyzing the long-term temporal context (spanning seconds rather than milliseconds), TalkNet effectively distinguishes between a person speaking and a person simply smiling or chewing, which is critical for accurate reframing.20 Once the active speaker is identified, their face coordinates become the target for the crop.
+3.2.2 Rule of Thirds and Kalman Smoothing
+Raw detection data from models like MediaPipe or TalkNet is inherently noisy; using it directly to drive the crop window results in jittery, nausea-inducing footage. To emulate a human camera operator, we must apply Kalman Filtering. The Kalman filter is a recursive algorithm that estimates the state of a system (the position and velocity of the face) by combining a prediction model with noisy measurements.22
+The filter maintains a state vector   . At each frame, it predicts where the face should be based on its previous velocity. It then compares this prediction with the new measurement from the detector. If the measurement deviates slightly (noise), the filter trusts the prediction, resulting in a smooth path. If the measurement shows a consistent trend (movement), the filter updates the state. This "Dynamic Re-centering" allows the crop window to follow the subject smoothly, absorbing micro-movements while tracking gross motion.23
+Furthermore, the crop logic must enforce the Rule of Thirds. Simply centering the face places the eyes in the middle of the screen, which looks amateurish. The algorithm must calculate a target offset such that the subject's eyes align with the upper horizontal third line of the 9:16 frame (approximately pixel y=640).24 This creates a "Cinematic Crop" that feels composed rather than just extracted.
+3.3 Duration & Content Density: The Metric of Boredom
+The final technical hurdle is the algorithmic detection of boredom. Automated editing often fails to recognize when a video "drags." To prevent this, we must quantify Information Density. Information in this context is defined by the rate of change—both visual and auditory.
+We define two key metrics:
+1. Temporal Information (TI): This measures the visual intensity of motion. It is calculated by examining the difference between consecutive frames. A high TI value indicates significant motion (action, gestures), while a low TI indicates a static shot.25
+2. Audio Excitement (AE): This is derived from Spectral Flux, which measures the rate of change in the power spectrum of the audio signal. High flux corresponds to the onset of speech, percussive sounds, or changes in volume/pitch.27
+By monitoring these two signals over a sliding window (e.g., 2 seconds), we can construct a Boredom Detector. If both TI and AE fall below a critical threshold for a sustained period, the system flags the segment as a "Retention Risk." This flag triggers the "Viral Engine" to intervene—inserting a digital zoom (punch-in), a B-roll cutaway, or a text animation to artificially spike the information density and reset the viewer's attention span.28
+4. The "Viral Engine" Architecture
+Based on the deconstruction of retention mechanics and the technical solutions for automation, we propose a unified software architecture for the "Viral Engine." This system is designed to ingest raw media and deterministically output high-retention short-form video.
+4.1 System Design and Data Flow
+The architecture operates in four distinct layers: Input, Analysis, Logic, and Rendering.
+Table 2: Viral Engine Modules and Functionality
+Layer
+	Module
+	Description
+	Technical Dependencies
+	1. Input
+	Ingest
+	Loads raw video/audio; standardizes frame rates.
+	ffmpeg-python, numpy
+	2. Analysis
+	Audio Pipeline
+	VAD, ASR (Whisper), Spectral Flux analysis.
+	librosa, faster-whisper
+	
+
+	Visual Pipeline
+	Face Detection, Active Speaker ID (TalkNet), Optical Flow (TI).
+	mediapipe, TalkNet, opencv
+	3. Logic
+	Sync Engine
+	Applies -50ms offset, generates ASS styling.
+	pysubs2
+	
+
+	Reframing Engine
+	Kalman smoothing, Rule of Thirds calculation.
+	filterpy
+	
+
+	Pacing Engine
+	Boredom Detection, Zoom insertion logic.
+	Custom Logic
+	4. Rendering
+	Compositor
+	Assembles crops, overlays, and audio.
+	FFmpeg (filter_complex)
+	4.2 The "Editing Score" (E-Score)
+To evaluate the potential success of a generated video before publication, the engine calculates an Editing Score (E-Score). This data-driven metric acts as a quality assurance gate.
+  
+
+*    (Optimal Average Shot Length): Measures the mean duration between visual changes. The score penalizes sustained static shots longer than 3 seconds.
+*    (Visual Event Frequency): A count of "retention spikes" (text pops, zooms, cuts) per second. The target is   .
+*   : A heuristic measuring the alignment of text onsets with audio P-centers (target offset -50ms).
+*   : The percentage of video frames where the active speaker's eyes are positioned within the upper third of the canvas.
+4.3 The "Boredom Detector" Logic
+The Boredom Detector operates as a watchdog during the editing process. It scans the computed TI and AE metrics.
+   * Logic: IF (Visual_Change < Threshold_V) AND (Audio_Flux < Threshold_A) for Duration > 2.0s THEN Trigger_Intervention.
+   * Interventions: The system selects from a library of retention hacks:
+   1. Digital Zoom: Scale the video to 115% over 200ms (a "punch-in").
+   2. Asset Injection: Overlay a relevant emoji or stock image (if semantic analysis supports it).
+   3. Visual Noise: Add a subtle camera shake or light leak effect.
+This automated intervention ensures that the final output maintains the "heartbeat" of visual change required to sustain the neuro-cinematic orientation response.
+5. Technical Specifications & Implementation
+This section details the specific algorithms and code logic required to build the core components of the Viral Engine.
+5.1 Algorithm A: Perceptual Sync (Python/FFmpeg)
+Objective: Generate .ass subtitles with a negative perceptual offset and elastic "pop-in" animation to maximize reading engagement.
+Implementation Strategy:
+The standard SRT format is insufficient for high-retention text because it lacks the ability to define coordinate-level animations. We utilize the ASS format's \t (transform) tags to create dynamic motion.
+Code Logic (Pseudocode):
+
+
+Python
+
+
+
+
+import whisper
+import pysubs2
+
+def generate_viral_subtitles(audio_path):
+   # 1. Transcribe with timestamps
+   model = whisper.load_model("base")
+   result = model.transcribe(audio_path, word_timestamps=True)
+   
+   # 2. Process segments with Perceptual Offset
+   subs = pysubs2.SSAFile()
+   OFFSET_MS = -50  # Negative Perceptual Offset
+   
+   for segment in result['segments']:
+       for word in segment['words']:
+           start = (word['start'] * 1000) + OFFSET_MS
+           end = (word['end'] * 1000) + OFFSET_MS
+           
+           # Ensure no overlap due to negative offset
+           if start < previous_end: start = previous_end
+           
+           # 3. Define ASS Style & Animation
+           # Pop-in effect: Scale 110% -> 100%
+           animation = r"{\t(0,80,\fscx110\fscy110)\t(80,150,\fscx100\fscy100)}"
+           
+           # Karaoke Highlight (Primary Color vs Secondary)
+           text = f"{animation}{\c&H00FFFF&}{word['word']}"
+           
+           event = pysubs2.SSAEvent(start=start, end=end, text=text)
+           subs.append(event)
+           
+   subs.save("viral_captions.ass")
+
+FFmpeg Rendering:
+The rendering step uses the ass filter, which renders the vector graphics of the subtitle file onto the video. This is computationally expensive but provides "baked-in" captions that are part of the video bitstream, ensuring they are not covered by platform UI.
+ffmpeg -i input.mp4 -vf "ass=viral_captions.ass" -c:a copy output.mp4
+5.2 Algorithm B: Cinematic Crop (Kalman Filter)
+Objective: Convert 16:9 to 9:16 while keeping the speaker's eyes in the upper third, using Kalman filtering to smooth the camera motion.
+Implementation Strategy:
+We utilize the filterpy library for the Kalman implementation. The state transition matrix (  ) models the face motion as having constant velocity, which allows the filter to anticipate movement and lag less than a simple moving average.
+Code Logic (Pseudocode):
+
+
+Python
+
+
+
+
+from filterpy.kalman import KalmanFilter
+import mediapipe as mp
+
+def cinematic_tracker():
+   # 1. Initialize Kalman Filter
+   kf = KalmanFilter(dim_x=4, dim_z=2) # State: [x, y, dx, dy], Measurement: [x, y]
+   kf.F = np.array([, , , ]) # State Transition
+   kf.H = np.array([, ]) # Measurement Function
+   kf.R *= 10  # Measurement Noise (Trust the model more than the jittery detection)
+   kf.Q *= 0.1 # Process Noise (Assume smooth motion)
+
+   # 2. Frame Loop
+   for frame in video:
+       # Detect Face (using Active Speaker Logic if needed)
+       landmarks = mp_face_mesh.process(frame)
+       eye_center_x, eye_center_y = get_eye_centroid(landmarks)
+       
+       # 3. Kalman Predict & Update
+       kf.predict()
+       kf.update([eye_center_x, eye_center_y])
+       smooth_x, smooth_y = kf.x, kf.x
+       
+       # 4. Calculate Crop Coordinates (Rule of Thirds)
+       # Target: Eyes at 33% height of the 9:16 frame
+       target_crop_y = smooth_y - (VERTICAL_HEIGHT * 0.33)
+       
+       # Clamp to video bounds
+       crop_x = clamp(smooth_x - (VERTICAL_WIDTH / 2), 0, MAX_W)
+       crop_y = clamp(target_crop_y, 0, MAX_H)
+       
+       crops.append((crop_x, crop_y))
+
+5.3 Algorithm C: Attention Retention (Boredom Detector)
+Objective: Analyze the video timeline to identify and flag sections with low information density.
+Implementation Strategy:
+We compute the Temporal Information (TI) using frame differencing in OpenCV and Audio Excitement (AE) using spectral analysis in Librosa.
+Code Logic (Pseudocode):
+
+
+Python
+
+
+
+
+import cv2
+import librosa
+
+def detect_boredom(video_path, audio_path):
+   # 1. Compute Visual Temporal Information (TI)
+   cap = cv2.VideoCapture(video_path)
+   ti_scores =
+   while cap.isOpened():
+       ret, frame = cap.read()
+       gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+       # Difference between current and previous frame
+       diff = cv2.absdiff(gray, prev_gray)
+       # Standard deviation represents complexity of motion
+       ti = np.std(diff) 
+       ti_scores.append(ti)
+       prev_gray = gray
+
+   # 2. Compute Audio Excitement (Spectral Flux)
+   y, sr = librosa.load(audio_path)
+   onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+   
+   # 3. Sliding Window Analysis (2 seconds)
+   window_size = int(2 * fps)
+   for i in range(len(ti_scores) - window_size):
+       visual_density = mean(ti_scores[i : i+window_size])
+       audio_density = mean(onset_env[i : i+window_size])
+       
+       # 4. Threshold Check
+       if visual_density < 0.2 and audio_density < 0.2:
+           print(f"Boredom detected at frame {i}. Inserting Zoom.")
+           insert_digital_zoom(i, i+window_size)
+
+6. Detailed Analysis of Research Findings and Implications
+6.1 The "MrBeast" Standard vs. Educational Reality
+While MrBeast’s 1.6-second ASL sets a benchmark for entertainment, blind adherence to this speed in educational content can be detrimental. The cognitive load required to process complex information is higher than that for entertainment. Therefore, the Viral Engine does not enforce a strict cut rate for "Talking Head" videos. Instead, it optimizes for Semantic Event Density. A caption change, a highlighted keyword, or a visual diagram appearing on screen counts as a "cut" in the viewer's brain, resetting the attention span without breaking the auditory flow of the lesson. The engine allows for shots up to 4-5 seconds if and only if the subtitle density is high enough to compensate.3
+6.2 The Latency Paradox and Predictive Coding
+The implementation of the -50ms perceptual offset is not merely a technical fix; it engages the brain's predictive coding mechanisms. When the eye sees the text slightly before the ear hears the sound, the brain creates a prediction. The arrival of the sound validates this prediction. This loop—Prediction -> Validation -> Reward—occurs dozens of times per minute in a captioned video. By engineering this specific latency, we are effectively creating a micro-dopamine loop that subconsciously reinforces the viewer's engagement with the content.11
+6.3 The "30% Face" Rule and Social Trust
+Data regarding vertical video performance on TikTok suggests a strong correlation between face prominence and retention. Videos where the face occupies less than 20% of the screen perform significantly worse than those where it occupies 30% or more. This is likely due to the importance of facial micro-expressions in conveying nuance and establishing trust. However, a tight face crop eliminates hand gestures, which are also high-engagement cues. The "Cinematic Crop" algorithm must therefore be tuned to prioritize a "Medium Close-Up" (chest up) rather than a tight "Close-Up" (neck up), ensuring that gestural communication is captured while strictly maintaining the Rule of Thirds for the eyes.4
+7. Conclusion
+The transition to 2026 marks the end of intuition-based editing for short-form content. The "Viral Engine" described herein represents a shift toward Engineering Retention—a methodology where every frame, pixel, and millisecond is calculated to maintain the neural connection between screen and viewer. By solving the technical deficits of subtitle latency, vertical framing, and content pacing through advanced computational methods, creators can produce content that is natively optimized for the algorithmic landscape. The future of content creation belongs to those who can successfully merge the art of storytelling with the science of attention.
+________________
+References: 3 Increditors. "Alex Hormozi Video Editing Breakdown." 5 ItsMostly. "Alex Hormozi's Content Strategy: Hook, Retain, Reward." YouTube. "MrBeast Shorts Editing Pacing Analysis." 2 Scribd. "MrBeast Shorts In-Depth Performance Analysis." 4 Opus Pro. "Ideal YouTube Shorts Length & Format." 10 Subtitle Tools. "Subtitle Sync Shifter." 24 Videomaker. "A Beginner's Guide to the Rule of Thirds." 30 YouTube. "Cinematic Cropping Algorithm Rule of Thirds." 7 ResearchGate. "Eye-Tracking Analysis of User Experiences on TikTok." 28 AIR.io. "Advanced Retention Editing." 6 TriVision Studios. "Best Length for TikTok Video in 2026." 9 NCBI. "Perceptual Center Audio Speech Sync Offset." 11 ScienceDaily. "Brain Alters Sense of Time to Synchronize Perception." 12 Psychology Today. "How Our Brain Learns to Synchronize Sights and Sounds." 15 MD-Subs. "Optimal Subtitle Font Size." 16 YouTube. "Animate Text in Python with MoviePy." 19 GitHub. "TalkNet Active Speaker Detection." 22 Atlantis Press. "Kalman Filter Implementation for Face Tracking." 23 GitHub. "MediaPipe Face Tracking Smooth Cinematic Crop." 25 GitHub. "SI-TI Calculation Tools." 26 ResearchGate. "Analysis of Spatial and Temporal Information Variation." 18 StackOverflow. "FFmpeg Drawtext Filter with Zoom In Effect." 29 GitHub. "Frame Level Video Forgery Detection." 3 Increditors. "Alex Hormozi Editing Style Breakdown." 31 Bannerbear. "How to Add Subtitles with FFmpeg." 27 Scipy Proceedings. "Librosa Spectral Flux Audio Excitement." 32 Librosa. "Onset Strength Documentation." 13 StackOverflow. "In Advanced Substation Alpha How Can I Animate." 33 Reddit. "Animation for Subtitles in MoviePy." 20 Google Research. "SPELL ActivityNet Challenge 2022." 17 FFmpeg. "Filters Documentation." 8 UGC Factory. "Ultimate Guide to Safe Zones for TikTok." 34 House of Marketers. "Guide to Safe Zones TikTok." 20 Google Research. "SPELL Active Speaker Detection." 35 Reddit. "Minimum Font Size for Legibility." 36 GitHub. "LoopyCut CLI." 21 Google Research. "NUS-HLT Report for ActivityNet Challenge 2021." 4 Opus Pro. "Ideal YouTube Shorts Length Format Retention."
+Works cited
+   1. AVERAGE SHOT LENGTH: YouTube videos vs. movies, accessed January 26, 2026, https://www.youtube.com/shorts/w43vfiPwaMs
+   2. MrBeast Shorts - In-Depth Performance Analysis ? | PDF - Scribd, accessed January 26, 2026, https://www.scribd.com/document/856534386/MrBeast-Shorts-In-Depth-Performance-Analysis
+   3. The Ultimate Guide for Video Editing Style and Techniques by Ali Abdaal, Mr. Beast, and Alex Hormozi - Increditors, accessed January 26, 2026, https://increditors.com/an-ultimate-guide-to-alex-hormozi-ali-abdaal-and-mr-beast-video-editing-style-and-methods/
+   4. The Ideal YouTube Shorts Length & Format for Retention (Data-Backed) - OpusClip Blog, accessed January 26, 2026, https://www.opus.pro/blog/ideal-youtube-shorts-length-format-retention
+   5. Alex Hormozi's Content Strategy: Hook, Retain, and Reward Explained, accessed January 26, 2026, https://itsmostly.com/blog/alex-hormozis-content-strategy-hook-retain-and-reward-explained
+   6. The Best Length for a TikTok Video in 2026 - TriVision Studios, accessed January 26, 2026, https://trivisionstudios.com/best-length-for-tiktok-video-in-2026/
+   7. Eye-Tracking Analysis of User Experiences on TikTok MACAN Museum | Request PDF, accessed January 26, 2026, https://www.researchgate.net/publication/379446515_Eye-Tracking_Analysis_of_User_Experiences_on_TikTok_MACAN_Museum
+   8. Safe Zones for TikTok, Instagram & Facebook Stories 2025 - UGC Factory, accessed January 26, 2026, https://www.ugcfactory.io/blog/the-ultimate-guide-to-safe-zones-for-tiktok-facebook-and-instagram-stories-reels-2025
+   9. Sight and sound out of synch: Fragmentation and renormalisation of audiovisual integration and subjective timing - PMC - PubMed Central, accessed January 26, 2026, https://pmc.ncbi.nlm.nih.gov/articles/PMC3878386/
+   10. fix out of sync subtitles - Subtitle Tools, accessed January 26, 2026, https://subtitletools.com/subtitle-sync-shifter
+   11. Study shows how our brains sync hearing with vision | ScienceDaily, accessed January 26, 2026, https://www.sciencedaily.com/releases/2021/05/210511081149.htm
+   12. How Our Brain Learns to Synchronize Sights and Sounds | Psychology Today, accessed January 26, 2026, https://www.psychologytoday.com/us/blog/illusions-delusions-and-reality/202505/how-our-brain-learns-to-synchronize-sights-and-sounds
+   13. In Advanced SubStation Alpha (Ass file) how can I animate each word as it is spoken?, accessed January 26, 2026, https://stackoverflow.com/questions/76848089/in-advanced-substation-alpha-ass-file-how-can-i-animate-each-word-as-it-is-spo
+   14. What are the best fonts for subtitles on short videos? : r/VideoEditing - Reddit, accessed January 26, 2026, https://www.reddit.com/r/VideoEditing/comments/1bpg2i9/what_are_the_best_fonts_for_subtitles_on_short/
+   15. Subtitle Font Size: Choosing the Right One - Max Deryagin, accessed January 26, 2026, https://www.md-subs.com/blog/saa-subtitle-font-size
+   16. Animate Text in Python with Moviepy: Translate, Rotate, Scale & Fade Effects - YouTube, accessed January 26, 2026, https://www.youtube.com/watch?v=Ex1kuxe6jRg
+   17. FFmpeg Filters Documentation, accessed January 26, 2026, https://ffmpeg.org/ffmpeg-filters.html
+   18. ffmpeg drawtext filter with zoom in effect - Stack Overflow, accessed January 26, 2026, https://stackoverflow.com/questions/50333232/ffmpeg-drawtext-filter-with-zoom-in-effect
+   19. zcxu-eric/Ego4d_TalkNet_ASD - GitHub, accessed January 26, 2026, https://github.com/zcxu-eric/Ego4d_TalkNet_ASD
+   20. Intel Labs at ActivityNet Challenge 2022: SPELL for Long-Term Active Speaker Detection - Google Research, accessed January 26, 2026, https://research.google.com/ava/2022/S2_SPELL_ActivityNet_Challenge_2022.pdf
+   21. NUS-HLT Report for ActivityNet Challenge 2021 AVA (Speaker) - Google Research, accessed January 26, 2026, https://research.google.com/ava/2021/S3_NUS_Report_AVA_ActiveSpeaker_2021.pdf
+   22. MediaPipe Iris and Kalman Filter for Robust Eye Gaze Tracking - Atlantis Press, accessed January 26, 2026, https://www.atlantis-press.com/article/126011300.pdf
+   23. How to reduce the jittering of face landmarks? · Issue #825 · google-ai-edge/mediapipe, accessed January 26, 2026, https://github.com/google/mediapipe/issues/825
+   24. A beginner's guide to the rule of thirds - Videomaker, accessed January 26, 2026, https://www.videomaker.com/article/c10/14215-a-beginners-guide-to-the-rule-of-thirds/
+   25. NabajeetBarman/SI-TI: Spatial Information (SI) and Temporal Information (TI) calculation using MATLAB - GitHub, accessed January 26, 2026, https://github.com/NabajeetBarman/SI-TI
+   26. (PDF) Analysis of Spatial and Temporal Information Variation for 10-Bit and 8-Bit Video Sequences - ResearchGate, accessed January 26, 2026, https://www.researchgate.net/publication/335127938_Analysis_of_Spatial_and_Temporal_Information_Variation_for_10-bit_and_8-bit_Video_Sequences
+   27. librosa: Audio and Music Signal Analysis in Python - SciPy Proceedings, accessed January 26, 2026, https://proceedings.scipy.org/articles/Majora-7b98e3ed-003.pdf
+   28. Advanced Retention Editing: Cutting Patterns That Keep Viewers Past Minute 8, accessed January 26, 2026, https://air.io/en/youtube-hacks/advanced-retention-editing-cutting-patterns-that-keep-viewers-past-minute-8
+   29. eyuuab/Frame_level_video_forgery_detaction: A Python project for detecting video tampering using frame difference analysis with OpenCV and NumPy. Includes anomaly detection and visualization tools. - GitHub, accessed January 26, 2026, https://github.com/eyuuab/Frame_level_video_forgery_detaction
+   30. The Rule of Thirds in 5 mins | How to compose cinematic scenes | Filmmaking 101, accessed January 26, 2026, https://www.youtube.com/watch?v=Bo5KZaBHv8w
+   31. How to Add Subtitles to a Video with FFmpeg (5 Different Styles) - Bannerbear, accessed January 26, 2026, https://www.bannerbear.com/blog/how-to-add-subtitles-to-a-video-with-ffmpeg-5-different-styles/
+   32. librosa.onset.onset_strength — librosa 0.11.0 documentation, accessed January 26, 2026, https://librosa.org/doc/main/generated/librosa.onset.onset_strength.html
+   33. Hello, I am trying to make animation for subtitles in moviepy but nothing really works - Reddit, accessed January 26, 2026, https://www.reddit.com/r/learnpython/comments/12w2n6n/hello_i_am_trying_to_make_animation_for_subtitles/
+   34. Stay Within Safe Zones – TikTok, Facebook and Instagram Reels/Stories, accessed January 26, 2026, https://houseofmarketers.com/guide-to-safe-zones-tiktok-facebook-instagram-stories-reels/
+   35. Minimum Font Size for Legibility of Video Text Overlays on Mobile : r/VideoEditing - Reddit, accessed January 26, 2026, https://www.reddit.com/r/VideoEditing/comments/ptfhti/minimum_font_size_for_legibility_of_video_text/
+   36. carmelosantana/loopycut-cli: Create seamless looped videos automatically! - GitHub, accessed January 26, 2026, https://github.com/carmelosantana/loopycut-cli

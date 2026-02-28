@@ -1,0 +1,16 @@
+[Script Info]
+Title: Animated Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial Black,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,5,2,2,10,10,50,1
+Style: Highlight,Arial Black,70,&H0000FFFF,&H00FFFFFF,&H00000000,&H00000000,1,0,0,0,100,100,0,0,1,5,2,2,10,10,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.95,0:00:01.44,Highlight,,0,0,0,,{\fscx80\fscy80\t(0,50,\fscx110\fscy110)\t(50,100,\fscx100\fscy100)}Hello
+Dialogue: 0,0:00:01.44,0:00:01.95,Highlight,,0,0,0,,{\fscx80\fscy80\t(0,50,\fscx110\fscy110)\t(50,100,\fscx100\fscy100)}World

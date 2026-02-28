@@ -1,0 +1,44 @@
+# Environment files (contain API keys)
+.env
+!.env.example
+
+# Runtime directories
+output/
+downloaded_videos/
+completed_videos/
+failed_videos/
+completed/
+failed/
+checkpoints/
+logs/
+envs/
+data/
+
+# Large media files
+*.mp4
+*.wav
+*.mkv
+*.mov
+*.avi
+
+# Models
+models/
+autonomous_trend_agent/models/
+
+# Node modules
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE / OS
+.vscode/
+.idea/
+.git/
+*.swp
+Thumbs.db
+
+# Executables
+*.exe
+Antigravity.exe

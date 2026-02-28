@@ -1,0 +1,245 @@
+﻿Technical Architecture Review: The "Blackwell Factory" Autonomous Video Repurposing Agent
+1. Executive Summary
+This document constitutes a comprehensive architectural critique and remediation roadmap for the "Blackwell Factory," a proposed autonomous video repurposing agent targeting the NVIDIA RTX 5080 Laptop GPU (Blackwell GB203 architecture). As requested, this review is conducted from the perspective of a Principal Video Systems Architect, evaluating the system's viability against the specific silicon constraints and capabilities of the target hardware.
+The current "Blackwell Factory" prototype utilizes a "Hub-and-Spoke" topology integrating Qwen2.5-VL for visual-language reasoning, SAM 2.1 for segmentation, and Parakeet TDT 1.1B for automatic speech recognition. While the component selection represents a state-of-the-art model selection, the integration layer is fundamentally flawed. The current implementation treats the RTX 5080 as a generic compute accelerator rather than a specialized media instrument, resulting in critical failures across video assembly, cinematic logic, inter-process communication (IPC), and editorial direction.
+The analysis identifies four catastrophic bottlenecks in the current design:
+1. Video Assembly Corruption: The reliance on OpenCV for frame manipulation introduces destructive color space conversions (BGR/YUV mismatch), eradicates High Dynamic Range (HDR) data, and fails to engage the 9th Generation NVENC engines native to the Blackwell architecture.
+2. Robotic Framing Logic: The "Smart Crop" module currently employs naive centroid tracking, resulting in jittery, unengaging visuals that lack the temporal smoothing and semantic awareness required for professional broadcast standards.
+3. IPC Saturation: The reliance on disk-based message passing creates a severe I/O bottleneck, idling the GPU's massive compute throughput while waiting for storage bus transactions, thereby negating the bandwidth advantages of GDDR7 memory.
+4. Director Hallucination: The Large Language Model (LLM) lacks a deterministic output schema, leading to "amnesiac" editing decisions and invalid Edit Decision Lists (EDLs).
+The central thesis of this roadmap is a mandatory architectural pivot from a Disk-Coupled, CPU-Centric workflow to a Zero-Copy, VRAM-Resident pipeline. This transition leverages the specific architectural advantages of the GB203 silicon—specifically its 9th Gen NVENC AV1 engines, optical flow accelerators, and Tensor Cores with FP8 support—to achieve real-time throughput. We propose the integration of NVIDIA DALI for ingestion, PyNvVideoCodec for hardware-accelerated transcoding, LR-ASD for semantic active speaker detection, and OpenTimelineIO (OTIO) for deterministic editorial interchange.
+________________
+2. Hardware Substrate Analysis: The GB203 (RTX 5080 Mobile)
+To architect a high-performance video agent, one must first deeply understand the silicon substrate upon which it operates. The decision to deploy on the RTX 5080 Laptop GPU imposes specific constraints regarding thermal envelopes and memory capacity, while offering unique opportunities via the Blackwell architecture's specialized media and tensor blocks.
+2.1. The GB203 Silicon Architecture
+The RTX 5080 Laptop is built on the GB203 die, a derivative of the Blackwell architecture tailored for high-efficiency mobile performance. Unlike desktop implementations that may prioritize raw wattage, the mobile GB203 must balance throughput against the thermal design power (TDP) limitations of a laptop chassis.1
+Compute Specifications and Thermal Reality:
+The GB203 features 7,680 CUDA cores, manufactured on the TSMC 4N FinFET process (5 nm class).1 This provides the raw parallel throughput required for the pixel-wise operations inherent in SAM 2.1 and the matrix multiplications of Qwen2.5-VL.2 However, the base clock of 975 MHz and boost clock of 1500 MHz indicate a thermal constraint.1
+* Architectural Implication: The agent cannot rely on brute-force CUDA compute for every stage of the pipeline. In a laptop environment, long-running inference sessions (typical of video processing) will thermally saturate the cooling solution, causing clock throttling. Therefore, the architecture must offload every possible task—decoding, encoding, optical flow—to fixed-function hardware (NVDEC/NVENC/NVOFA) to reserve the CUDA cores strictly for the AI inference workloads that have no alternative acceleration path.
+2.2. Memory Subsystem: The GDDR7 Paradigm Shift
+The RTX 5080 Laptop is equipped with 16 GB of GDDR7 memory.1 This memory configuration presents both the system's greatest asset and its most dangerous bottleneck.
+The GDDR7 Bandwidth Advantage:
+GDDR7 offers a massive increase in memory bandwidth compared to the GDDR6/6X of the previous RTX 40 series generation.2 This high-bandwidth highway is advantageous for the "Hub-and-Spoke" model if, and only if, the data remains resident on the GPU. High bandwidth allows for the rapid movement of large tensors—such as 4K uncompressed frame buffers or massive attention maps from the VLM—between the compute units and memory without stalling the shader cores.
+The Capacity Constraint (16 GB):
+While bandwidth is abundant, capacity is scarce. 16 GB of VRAM is the system's "Achilles' Heel" for a multimodal pipeline running simultaneously. A standard deployment of the proposed stack would immediately trigger Out-Of-Memory (OOM) errors:
+* Qwen2.5-VL (7B): In standard FP16 precision, this model alone consumes approximately 14 GB of VRAM.
+* SAM 2.1 (Large): The image encoder and mask decoder require approximately 2.5 GB of VRAM.
+* Parakeet TDT: Requires roughly 1 GB of VRAM.
+* Frame Buffers: A single uncompressed 4K frame (RGBA float32) consumes ~32 MB. A minimal ring buffer for processing requires gigabytes of allocation.
+Strategic Requirement: The architecture must utilize the Blackwell-native FP8 or FP4 quantization support to fit these models into memory.3 Running models at FP16 is mathematically impossible on this hardware configuration without swapping to system RAM, which would destroy real-time performance.
+2.3. The Media Engine: 9th Generation NVENC
+The Blackwell architecture introduces the 9th Generation NVENC (NVIDIA Encoder), a critical differentiator from the previous Ada Lovelace generation.2 This is not merely a speed increase; it introduces qualitative capabilities essential for a repurposing agent targeting social media distribution.
+AV1 Efficiency and UHQ Mode:
+The 9th Gen engine improves AV1 and HEVC encoding quality by 5% over the RTX 40 series at the same bitrate.2 More importantly, it introduces a new AV1 Ultra High Quality (UHQ) mode. This mode utilizes additional silicon area to perform more exhaustive motion search and rate-distortion optimization, yielding an additional 5% efficiency gain.5 For an agent generating video for platforms like TikTok or YouTube Shorts—where bitrate is strictly capped—this allows for significantly higher visual fidelity per bit.
+4:2:2 Chroma Subsampling:
+Blackwell adds hardware support for 4:2:2 H.264 and HEVC encoding.5 While final distribution formats are typically 4:2:0, internal processing pipelines benefit significantly from 4:2:2 to preserve chroma detail. This is particularly vital for an agent that may be overlaying sharp text or graphics onto the video; 4:2:0 subsampling often causes "chroma bleeding" around red text, a common artifact in amateur video production that the Blackwell architecture can eliminate.
+2.4. Tensor Cores and The Transformer Engine
+The GB203 features specialized Tensor Cores that support FP8 precision natively.3 This Second-Generation Transformer Engine (TE) is designed specifically to accelerate Transformer-based models like Qwen and Parakeet.
+Architectural Misalignment: If the current stack runs PyTorch models in standard FP32 or FP16 without leveraging the Transformer Engine's FP8 capabilities, the system is wasting approximately 50% of the available compute throughput and doubling memory pressure. The roadmap must include a migration to TensorRT-LLM or FP8-aware PyTorch inference to unlock this silicon's potential.
+________________
+3. Pipeline Topography & IPC Architecture
+The current "Hub-and-Spoke" architecture is conceptually sound for modularity—separating vision, audio, and logic into distinct services—but it is implementation-deficient regarding data transport. The user query identifies "IPC Bottlenecks (Disk I/O)" as a primary failure mode, indicating a reliance on the file system for passing data between modules.
+3.1. The "Disk as Bus" Anti-Pattern
+In the current design, it appears that the Hub and Spokes exchange data by writing video frames or intermediate tensors to disk, which the receiving process then reads. This acts as a severe brake on the system.
+The Latency Compounding Effect:
+Even with a fast NVMe SSD (PCIe Gen 4 or 5), disk I/O is orders of magnitude slower than memory transport.
+* NVMe Throughput: ~7-10 GB/s (Best Case).
+* GDDR7 Throughput: ~28 GB/s per pin (Effective internal bandwidth is hundreds of GB/s).
+* Latency: Disk access incurs milliseconds of latency. GPU memory access is measured in microseconds.
+When passing 4K video (approx. 24-30 MB per uncompressed frame), writing to disk triggers a "stop-and-wait" capability gap. The GPU (RTX 5080) effectively idles while waiting for the CPU to push data to the SSD controller. For a repurposing pipeline that involves multiple passes (Decode -> Vision Spoke -> Crop Spoke -> Encode), this "ping-pong" effect between VRAM, System RAM, and Disk can increase processing time by a factor of 10x compared to keeping data resident on the GPU.
+3.2. The Zero-Copy Mandate
+To utilize the RTX 5080's capabilities, the architecture must adopt a Zero-Copy philosophy. Data loaded into VRAM should never leave VRAM until the final encoding step.
+3.2.1. System RAM: Shared Memory Ring Buffers
+For data that must touch the CPU (e.g., control logic, lightweight metadata, or audio processing where GPU acceleration is unnecessary), standard Python multiprocessing queues are insufficient due to the serialization overhead of pickle.6
+Solution: We must implement Python 3.8+ multiprocessing.shared_memory.8
+* Mechanism: Create a circular buffer (Ring Buffer) in shared system memory.
+* Operation: The "Decoder Process" writes raw frames to a named shared memory block. The "Vision Process" accesses this block via a NumPy buffer view. This eliminates the memory copy between processes, reducing CPU overhead and latency.
+3.2.2. GPU VRAM: CUDA IPC
+For the heavy lifting (video frames, tensors), we must bypass system RAM entirely using CUDA Inter-Process Communication (IPC).
+Solution: PyTorch CUDA IPC or NVIDIA DALI.
+* PyTorch IPC: PyTorch allows sharing CUDA tensors between processes using tensor.share_memory_().10 This moves the file descriptor to shared memory while keeping the heavy data in VRAM. Process A (Decoder) loads the frame to a GPU Tensor; Process B (Qwen/SAM) accesses it instantly via the handle.
+* NVIDIA DALI (Recommended): DALI (Data Loading Library) is the superior solution for the ingest pipeline. It is designed to act as a GPU-accelerated data pump.12
+   * Implementation: Using dali.fn.readers.video, the system can decode video files using the RTX 5080's NVDEC engine directly into a GPU buffer.14
+   * Benefit: This creates a pipeline where the JPEG/H.264 stream is read from disk, decoded on GPU, and presented as a PyTorch tensor without the CPU ever touching a pixel. This completely eliminates the PCIe bottleneck for video ingestion.
+3.3. Throughput Analysis: DALI vs. OpenCV
+The following comparison illustrates the theoretical throughput advantage of moving to a DALI-based pipeline on the Blackwell architecture.
+Table 1: Ingestion Pipeline Comparison
+Feature
+	Current (OpenCV/Disk)
+	Proposed (DALI/CUDA IPC)
+	Improvement Factor
+	Decode Compute
+	CPU (Software FFmpeg)
+	GPU (NVDEC Gen 6)
+	~8-10x
+	Data Path
+	SSD -> RAM -> CPU -> RAM -> GPU
+	SSD -> RAM -> GPU (Direct)
+	Zero-Copy
+	Color Conversion
+	CPU (Slow, limited threads)
+	GPU (CUDA Kernel)
+	~20x
+	Memory Latency
+	Milliseconds (PCIe/Disk)
+	Microseconds (VRAM)
+	~1000x
+	Batching
+	Sequential Frame Read
+	Prefetched Batching
+	High Throughput
+	________________
+4. The Vision Stack: Video Assembly & Encoding
+The user reports that "OpenCV corrupts output." This is a pervasive issue in computer vision pipelines attempting to perform broadcast-grade video work. OpenCV is a tool for analysis, not for mastering.
+4.1. Diagnosis of OpenCV Corruption
+OpenCV's VideoWriter wrapper is a "black box" that obfuscates the underlying FFmpeg settings, leading to several critical failures on the RTX 5080:
+1. Color Space Mismatch (The "Washed Out" Look): OpenCV natively operates in BGR (0-255) color space. Video codecs (H.264/HEVC/AV1) typically utilize YUV420p (Limited Range 16-235). The conversion performed by cv2.cvtColor or implicitly by VideoWriter often assumes the wrong color matrix (e.g., Rec.601 instead of Rec.709 or BT.2020).16 This results in "milky" blacks, crushed whites, and shifted hues—unacceptable for a professional repurposing agent.
+2. Bit-Depth Truncation (The HDR Killer): Modern mobile devices record in 10-bit HDR (HLG or HDR10). OpenCV's standard pipeline operates on 8-bit integers (uint8). Ingesting a 10-bit HDR source into OpenCV immediately truncates the dynamic range, introducing severe banding artifacts.18
+3. Software Encoding Bottleneck: OpenCV defaults to software encoders (like libx264) unless specifically compiled with CUDA support. Even with CUDA enabled, it rarely exposes the granular controls required to activate the advanced features of the 9th Gen NVENC (such as AV1 UHQ mode).20
+4.2. The Solution: PyNvVideoCodec (The New VPF)
+The remediation roadmap requires abandoning OpenCV for the assembly phase. The designated replacement is PyNvVideoCodec (formerly Video Processing Framework or VPF).21
+Direct Hardware Access:
+PyNvVideoCodec binds directly to the NVIDIA Video Codec SDK, granting Python access to the 9th Gen NVENC features of the GB203 die.5 It allows the agent to configure the encoder with specific presets (P1 through P7) and tuning info (HighQuality, LowLatency, UltraHighQuality) that OpenCV cannot touch.
+Surface-Based Processing:
+Crucially, PyNvVideoCodec operates on Surface objects that reside in VRAM. A frame decoded by NVDEC can be passed to a CUDA kernel (for cropping), then to SAM 2.1 (for masking), and finally to NVENC without ever touching CPU memory.23 This preserves the "Zero-Copy" mandate.
+10-Bit HDR Pipeline (P010):
+The RTX 5080 supports 10-bit encoding via the P010 pixel format.18 PyNvVideoCodec supports P010 surfaces natively.22 By configuring the pipeline to maintain P010 from decode to encode, the agent preserves the full dynamic range of the source material, ensuring that the output is "HDR Ready" for platforms that support it.
+4.3. Audio Handling & Muxing Strategy
+PyNvVideoCodec is a video-only library; it does not handle audio.22 This presents a challenge: how to preserve audio fidelity without falling back to slow disk operations?
+The Named Pipe Strategy:
+The solution is to use FFmpeg with Named Pipes as the final muxer, fed by the GPU pipeline.26
+1. Video Stream: The PyNvVideoCodec encoder outputs a raw AV1 bitstream. This is written to a specialized buffer or a Named Pipe (on Windows) / FIFO (on Linux).
+2. Audio Stream: The audio is extracted from the source file using a lightweight FFmpeg subprocess ( -acodec copy to avoid re-encoding loss).29
+3. Muxing: A separate FFmpeg process reads the raw video bitstream from the pipe and the audio stream, muxing them into the final .mp4 or .mkv container.
+Command Line Structure for Muxing:
+
+
+Bash
+
+
+
+
+ffmpeg -f hevc -i pipe:0 -i audio_source.m4a -c:v copy -c:a copy -map 0:v:0 -map 1:a:0 output.mp4
+
+This approach ensures that the heavy video encoding happens on the NVENC silicon, while FFmpeg handles the lightweight containerization, satisfying the requirement for high-quality audio/video assembly without disk I/O bottlenecks for the video stream.
+________________
+5. Cinematic Intelligence: Smart Crop & Segmentation
+The user describes the current smart crop as "boring/robotic." This suggests a naive implementation, likely a simple bounding box tracker that centers the face in every frame. This creates a jittery, nauseating "locked-on" effect that lacks cinematic intention.
+5.1. Deconstructing the "Robotic" Crop
+Robotic cropping occurs when the algorithm minimizes the distance between the frame center and the subject's face centroid in every single frame.
+* Lack of Hysteresis: Real camera operators do not react instantly to micro-movements. They allow the subject to "breathe" within the frame.
+* Reaction Lag: A frame-by-frame tracker reacts after the subject moves, constantly playing catch-up.
+* Semantic Blindness: A simple face detector cannot distinguish between the active speaker and a listener, often cutting to the wrong person in a multi-subject shot.
+5.2. Solution Part A: Active Speaker Detection (ASD)
+To make the crop "smart," the agent must know who matters. A face detector sees all faces; a director sees the speaker. We must integrate an Active Speaker Detection (ASD) module.
+Model Selection for RTX 5080:
+* TalkNet: Effective but computationally heavy.30
+* UniTalk: Excellent for noisy, in-the-wild environments but potentially overkill for this specific pipeline.31
+* LR-ASD (Lightweight & Robust): This is the optimal choice for the Laptop 5080 environment. It achieves state-of-the-art results (94.5% mAP) with only 0.84 million parameters (compared to 34M+ for other SOTA models).32
+   * Integration: The Audio Spoke (Parakeet) provides audio features. The Vision Spoke provides face crops via DALI. LR-ASD fuses these to output a probability score for each face. The Smart Crop logic then targets only the face with the highest "Speaking Confidence," preventing the camera from drifting to silent bystanders.
+5.3. Solution Part B: The Virtual Camera (Kalman & PID)
+To cure the robotic movement, we must implement a Virtual Camera Model that simulates the physics of a heavy cinema camera.
+Kalman Filtering:
+We employ a Kalman filter to estimate the true state (position and velocity) of the subject.34
+* Mechanism: The raw face detection is treated as a "noisy measurement." The Kalman filter predicts the actual position, smoothing out the high-frequency jitter inherent in neural network detections.
+* Result: The camera movement becomes fluid, ignoring single-frame detection errors.
+PID Controller:
+A Proportional-Integral-Derivative (PID) controller manages the "pan" velocity of the virtual crop.37
+* Proportional: Move faster if the subject is far from the center.
+* Integral: Correct for long-term drift.
+* Derivative: Dampen the movement as the camera approaches the target, preventing "overshoot" (where the camera swings past the subject).
+The Look-Ahead Advantage:
+Since this is a repurposing agent (post-processing) and not a live stream, the agent possesses "god-like" knowledge of the future.
+* Implementation: The agent analyzes a buffer of future frames (e.g., $t$ to $t+60$). If the subject initiates a movement at frame $t+10$, the Virtual Camera can begin accelerating the pan at frame $t$. This mimics a skilled human operator who anticipates action, creating a proactive rather than reactive framing style.38
+5.4. SAM 2.1 Optimization
+Segment Anything Model (SAM) 2.1 is used for background masking (e.g., to apply a "Depth of Field" blur). However, running SAM on every frame is prohibitively expensive.
+* FP8 Quantization: The RTX 5080's Tensor Cores support FP8. SAM's heavy image encoder must be quantized to FP8 using TensorRT to reduce VRAM usage from ~3GB to ~1.5GB and double inference speed.
+* Keyframe Propagation: Instead of segmenting every frame, SAM should segment Keyframes (e.g., every 10th frame). The resulting mask can be propagated to intermediate frames using Optical Flow (accelerated by the GB203's NVOFA engine), which is significantly faster than running the full SAM inference.
+________________
+6. The Director's Mind: LLM & Context Strategies
+The "Director Agent" is the cognitive core of the system. Its current failure to manage context leads to disjointed edits and "hallucinated" decision lists.
+6.1. The Hallucination Problem
+Large Language Models, when asked to "edit video," often default to conversational prose (e.g., "I think we should cut to the funny part"). This is not executable code. Furthermore, if the agent treats every interaction as a new query, it loses the narrative arc of the video.
+6.2. Strategy: Structured Output (JSON Schema)
+The Director must speak JSON. We must enforce a strict schema for the output to ensure determinism.
+* JSON Whisperer: Techniques like "JSON Whisperer" or grammar-constrained decoding (available in frameworks like vLLM or llama.cpp for local models) force the LLM to output only valid JSON.39
+* Diff-Based Editing: Instead of regenerating the full Edit Decision List (EDL) at every turn—which consumes massive context window space—the LLM should generate RFC 6902 JSON Patches (e.g., "op": "add", "path": "/clips/2"). This reduces token usage by ~30%, allowing the agent to retain more of the video's transcript in its context window.39
+6.3. The Interchange Format: OpenTimelineIO (OTIO)
+The industry standard for editorial data is OpenTimelineIO (OTIO).42
+* Implementation: The Director Agent should output OTIO objects (Tracks, Clips, Transitions).
+* Decoupling: This creates a clean separation of concerns. The Director produces an .otio file. The Renderer (the PyNvVideoCodec pipeline) reads the .otio file and executes the cuts.
+* Human-in-the-Loop: Crucially, an .otio file can be opened in professional NLEs like DaVinci Resolve or Adobe Premiere. This allows a human editor to refine the AI's rough cut, transforming the agent from a "black box" into a collaborative assistant.45
+6.4. Qwen2.5-VL Context Management
+Qwen2.5-VL is a multimodal model capable of "seeing" the video. However, feeding 10 minutes of video frames into the context window is impossible.
+* Keyframe Sampling: The Vision Spoke should extract semantic keyframes (based on scene detection) and feed only these to Qwen.
+* Visual Prompts: The prompt structure should include a "Filmstrip" (grid of keyframes) + "Transcript" (Parakeet output).
+* Prompt Engineering: "You are an expert video editor. Given the transcript and visual filmstrip, output an OpenTimelineIO schema that highlights the most engaging 60 seconds."
+________________
+7. Remediation Roadmap
+This roadmap transforms the "Blackwell Factory" from a fragile prototype to a production-grade engine optimized for the RTX 5080.
+Phase 1: The "Iron" Upgrade (Foundation)
+* Objective: Eliminate Disk I/O and OpenCV corruption.
+* Action 1: Replace OpenCV VideoCapture with NVIDIA DALI. Configure the pipeline to decode directly to GPU memory (NV12 format).23
+* Action 2: Replace OpenCV VideoWriter with PyNvVideoCodec. Enable AV1 codec, Preset P7 (Slow/Quality), and the Blackwell-specific UHQ flag.21
+* Action 3: Implement the FFmpeg Named Pipe muxer for audio preservation.
+Phase 2: The "Cortex" Upgrade (Intelligence)
+* Objective: Fix "boring" crops and dumb edits.
+* Action 1: Integrate LR-ASD.32 Fuse audio and vision streams to identify the active speaker.
+* Action 2: Implement the Virtual Camera (Kalman Filter + PID). Feed active speaker coordinates into the filter to generate smooth, anticipatory pan/tilt coordinates.34
+* Action 3: Quantize Qwen2.5-VL and SAM 2.1 to FP8. Deploy using TensorRT-LLM to leverage the GB203's Transformer Engine and relieve VRAM pressure.3
+Phase 3: The "Director" Upgrade (Orchestration)
+* Objective: Deterministic, editable output.
+* Action 1: Define the OTIO Schema for the agent. Ensure the LLM outputs valid OTIO JSON.
+* Action 2: Implement Context Caching. Store the "scene graph" (who is speaking, what is shown) in a lightweight in-memory structure to maintain narrative consistency.
+* Action 3: Build the "Renderer" module which ingests OTIO files and drives the Phase 1 pipeline to render the final bits.
+________________
+8. Conclusion
+The "Blackwell Factory" is currently constrained not by the RTX 5080's hardware, but by a software stack inherited from legacy, CPU-centric computer vision paradigms. The RTX 5080 Laptop, with its GB203 silicon, 9th Gen NVENC, and GDDR7 memory, is a potent media workstation, but it requires a data path that respects the memory hierarchy.
+By executing this roadmap—specifically the move to a Zero-Copy DALI/PyNvVideoCodec pipeline, the integration of LR-ASD for semantic framing, and the adoption of OTIO for structured direction—the architecture will evolve from a stuttering prototype into a high-throughput, autonomous post-production facility. The silicon is ready; the software must now ascend to meet it.
+Works cited
+1. NVIDIA GeForce RTX 5080 Mobile Specs | TechPowerUp GPU Database, accessed January 21, 2026, https://www.techpowerup.com/gpu-specs/geforce-rtx-5080-mobile.c4236
+2. New GeForce RTX 50 Series Graphics Cards & Laptops Powered By NVIDIA Blackwell Bring Game-Changing AI and Neural Rendering Capabilities To Gamers and Creators, accessed January 21, 2026, https://www.nvidia.com/en-us/geforce/news/rtx-50-series-graphics-cards-gpu-laptop-announcements/
+3. nvidia/Qwen2.5-VL-7B-Instruct-FP8 - Hugging Face, accessed January 21, 2026, https://huggingface.co/nvidia/Qwen2.5-VL-7B-Instruct-FP8
+4. RTX 4080 SUPER vs RTX 5080 (2026): VRAM, Bandwidth & AI Performance (FP4/FP8), accessed January 21, 2026, https://www.bestgpusforai.com/gpu-comparison/5080-vs-4080-super
+5. NVIDIA RTX BLACKWELL GPU ARCHITECTURE, accessed January 21, 2026, https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf
+6. Issue 35813: shared memory construct to avoid need for serialization between processes, accessed January 21, 2026, https://bugs.python.org/issue35813
+7. Outperforming Apache Arrow: Building a Faster Zero-Copy Protocol from Scratch - Medium, accessed January 21, 2026, https://medium.com/@khushiyant/how-i-built-a-python-tensor-protocol-1500x-faster-than-pickle-e0ca4a4b3ed3
+8. multiprocessing.shared_memory — Shared memory for direct access across processes — Python 3.14.2 documentation, accessed January 21, 2026, https://docs.python.org/3/library/multiprocessing.shared_memory.html
+9. How to pass video stream from one Python script to another? - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/66353952/how-to-pass-video-stream-from-one-python-script-to-another
+10. Multiprocessing best practices — PyTorch 2.9 documentation, accessed January 21, 2026, https://docs.pytorch.org/docs/stable/notes/multiprocessing.html
+11. Using CUDA IPC memory handles in pytorch, accessed January 21, 2026, https://discuss.pytorch.org/t/using-cuda-ipc-memory-handles-in-pytorch/17548
+12. NVIDIA DALI Documentation, accessed January 21, 2026, https://docs.nvidia.com/deeplearning/dali/user-guide/docs/index.html
+13. Unlock Efficient Data Processing with the Latest from NVIDIA DALI | NVIDIA Technical Blog, accessed January 21, 2026, https://developer.nvidia.com/blog/unlock-efficient-data-processing-with-the-latest-from-nvidia-dali/
+14. Audio Decoder in DALI - NVIDIA Documentation, accessed January 21, 2026, https://docs.nvidia.com/deeplearning/dali/user-guide/docs/examples/audio_processing/audio_decoder.html
+15. nvidia.dali.fn.readers.video - NVIDIA Documentation, accessed January 21, 2026, https://docs.nvidia.com/deeplearning/dali/user-guide/docs/operations/nvidia.dali.fn.readers.video.html
+16. Feeding NV12 into openCV2 - Jetson Xavier NX - NVIDIA Developer Forums, accessed January 21, 2026, https://forums.developer.nvidia.com/t/feeding-nv12-into-opencv2/167626
+17. How to convert ffmpeg complex_filter to ffmpeg-python - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/61872725/how-to-convert-ffmpeg-complex-filter-to-ffmpeg-python
+18. Encode/AV1 - FFmpeg Wiki, accessed January 21, 2026, https://trac.ffmpeg.org/wiki/Encode/AV1
+19. FFmpeg GPU 10-bit HEVC encoding using NVENC - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/57893739/ffmpeg-gpu-10-bit-hevc-encoding-using-nvenc
+20. Pipe raw OpenCV images to FFmpeg - python - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/5825173/pipe-raw-opencv-images-to-ffmpeg
+21. PyNvVideoCodec - Get Started - NVIDIA Developer, accessed January 21, 2026, https://developer.nvidia.com/pynvvideocodec
+22. Read Me - NVIDIA Docs, accessed January 21, 2026, https://docs.nvidia.com/video-technologies/pynvvideocodec/read-me/index.html
+23. VPF Performance analysis · NVIDIA/VideoProcessingFramework Wiki - GitHub, accessed January 21, 2026, https://github.com/NVIDIA/VideoProcessingFramework/wiki/VPF-Performance-analysis
+24. VPF: Hardware-Accelerated Video Processing Framework in Python - NVIDIA Developer, accessed January 21, 2026, https://developer.nvidia.com/blog/vpf-hardware-accelerated-video-processing-framework-in-python/
+25. Are there some recommendations for NVEnc encoding? : r/AV1 - Reddit, accessed January 21, 2026, https://www.reddit.com/r/AV1/comments/19fb7rq/are_there_some_recommendations_for_nvenc_encoding/
+26. cohenrotem/pipe_flv2annexb: Write raw video to FFmpeg stdin PIPE, read encoded FLV H.264 from stdout PIPE and convert to Annex B. - GitHub, accessed January 21, 2026, https://github.com/cohenrotem/pipe_flv2annexb
+27. ffmpeg raw video and audio stdin - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/63762351/ffmpeg-raw-video-and-audio-stdin
+28. How to pipe output from ffmpeg using python? - Stack Overflow, accessed January 21, 2026, https://stackoverflow.com/questions/55001241/how-to-pipe-output-from-ffmpeg-using-python
+29. How to extract audio from video files using FFmpeg | Mux, accessed January 21, 2026, https://www.mux.com/articles/extract-audio-from-a-video-file-with-ffmpeg
+30. TalkNet-ASD/FAQ.md at main - GitHub, accessed January 21, 2026, https://github.com/TaoRuijie/TalkNet-ASD/blob/main/FAQ.md
+31. UniTalk: Towards Universal Active Speaker Detection in Real World Scenarios - arXiv, accessed January 21, 2026, https://arxiv.org/html/2505.21954v1
+32. LR-ASD: Lightweight and Robust Network for Active Speaker Detection - Haihan Duan's Homepage, accessed January 21, 2026, https://duanhaihan.github.io/publications/2025/IJCV2025.pdf
+33. The repository for Springer IJCV 2025 (LR-ASD: Lightweight and Robust Network for Active Speaker Detection) - GitHub, accessed January 21, 2026, https://github.com/Junhua-Liao/LR-ASD
+34. Kalman Filter in Python - GeeksforGeeks, accessed January 21, 2026, https://www.geeksforgeeks.org/python/kalman-filter-in-python/
+35. Implementing a Kalman Filter in Python for Sensor Fusion - Think Robotics, accessed January 21, 2026, https://thinkrobotics.com/blogs/learn/learn-to-design-and-3d-print-robotic-grippers-discover-materials-mechanisms-sensors-and-optimization-techniques-for-effective-robotic-arm-end-effectors
+36. Kalman Filter: Python Implementation - Simone Bertoni, accessed January 21, 2026, https://simonebertonilab.com/kalman-filter-python/
+37. Looking for algorithm for achieving fast, fluid and accurate pan-tilt servo control for camera object tracking? - Reddit, accessed January 21, 2026, https://www.reddit.com/r/algorithms/comments/16sae0b/looking_for_algorithm_for_achieving_fast_fluid/
+38. An Efficient and Streaming Audio Visual Active Speaker Detection System, accessed January 21, 2026, https://machinelearning.apple.com/research/efficient-streaming-audio-visual
+39. JSON Whisperer: Efficient JSON Editing with LLMs - arXiv, accessed January 21, 2026, https://arxiv.org/html/2510.04717v1
+40. Structured Output Generation in LLMs: JSON Schema and Grammar-Based Decoding | by Emre Karatas | Medium, accessed January 21, 2026, https://medium.com/@emrekaratas-ai/structured-output-generation-in-llms-json-schema-and-grammar-based-decoding-6a5c58b698a6
+41. LLM-Based Structured Generation Using JSONSchema | by Damodharan Jay - Medium, accessed January 21, 2026, https://medium.com/@damodharanjay/llm-based-structured-generation-using-jsonschema-139568c4f7c9
+42. Timeline Structure — OpenTimelineIO 0.19.0.dev1 documentation - Read the Docs, accessed January 21, 2026, https://opentimelineio.readthedocs.io/en/latest/tutorials/otio-timeline-structure.html
+43. OpenTimelineIO - GitHub, accessed January 21, 2026, https://github.com/OpenTimelineIO
+44. Welcome to OpenTimelineIO's documentation! - Read the Docs, accessed January 21, 2026, https://opentimelineio.readthedocs.io/en/latest/
+45. LAVE: LLM-Powered Agent Assistance and Language Augmentation for Video Editing, accessed January 21, 2026, https://www.dgp.toronto.edu/~bryanw/lave/
+46. How NVIDIA DGX Spark's Performance Enables Intensive AI Tasks, accessed January 21, 2026, https://developer.nvidia.com/blog/how-nvidia-dgx-sparks-performance-enables-intensive-ai-tasks/

@@ -1,0 +1,389 @@
+﻿Technical Assessment: PyTorch Integration on NVIDIA Blackwell (RTX 5090) Architecture
+1. Executive Summary and Architectural Paradigm
+The introduction of the NVIDIA Blackwell architecture, specifically the GeForce RTX 5090 Laptop GPU (Compute Capability sm_120), marks a pivotal generational shift in high-performance computing (HPC) and deep learning. While the hardware introduces substantial advancements in tensor processing, including native FP4 quantization support and enhanced memory bandwidth, it simultaneously creates a temporary but critical incompatibility with the prevailing software ecosystem. This report provides an exhaustive technical analysis of the interoperability between the PyTorch framework and the Blackwell architecture, diagnosing the root causes of current failures and prescribing a rigorous remediation strategy for researchers and engineers.
+The primary operational constraint identified is a binary incompatibility between the Just-In-Time (JIT) compilation artifacts present in stable PyTorch distributions (versions 2.5.x and 2.6.x) and the execution requirements of the sm_120 microarchitecture.1 The pervasive error, RuntimeError: CUDA error: no kernel image is available for execution on the device, indicates that standard binary wheels lack the necessary Streaming Assembler (SASS) instructions or forward-compatible Parallel Thread Execution (PTX) code required by the Blackwell driver stack.3
+To operationalize the RTX 5090 for deep learning workloads, the software stack must be fundamentally upgraded to leverage CUDA Toolkit 12.8, which introduces the compiler support (nvcc) for the sm_120 target. Consequently, the standard "stable" release channels for PyTorch are currently insufficient. The immediate path to stability requires the adoption of PyTorch 2.7 Nightly (Preview) builds or the utilization of NVIDIA NGC containers (Tag 25.01+).5
+This report outlines a comprehensive deployment roadmap, prioritizing a Windows Subsystem for Linux (WSL2) environment to mitigate the dependency conflicts inherent in native Windows setups, and provides detailed protocols for compiling critical ecosystem extensions such as FlashAttention and bitsandbytes from source.
+________________
+2. Architectural Analysis: The Blackwell sm_120 Compatibility Gap
+To understand the necessity of the specific installation commands provided in this report, it is essential to first deconstruct the underlying mechanical failure of current stable software on the RTX 5090. The breakdown occurs at the intersection of the hardware instruction set and the software compilation model.
+2.1 Compute Capability sm_120 vs. Predecessors
+The RTX 5090 is built upon the Blackwell architecture, designated by NVIDIA as Compute Capability 12.0 (sm_120).1 This nomenclature represents a significant departure from previous architectures: Hopper (sm_90), Ada Lovelace (sm_89), and Ampere (sm_80/sm_86).
+Deep learning frameworks like PyTorch interact with the GPU via CUDA kernels—C++ functions compiled into GPU-readable instructions. This compilation process occurs in two distinct stages, which are critical to understanding the current compatibility crisis:
+1. Virtual Architecture (PTX): Code is first compiled into an intermediate assembly language known as Parallel Thread Execution (PTX). This code is architecture-agnostic to a degree but versioned based on the features it uses.
+2. Real Architecture (SASS): The PTX is subsequently compiled into binary machine code (Streaming Assembler or SASS) optimized for a specific GPU generation's streaming multiprocessors.
+The compatibility matrix failure currently experienced by RTX 5090 users stems from the fact that stable PyTorch wheels (e.g., v2.5.1) are built with a TORCH_CUDA_ARCH_LIST that typically spans sm_50 through sm_90.1 When these wheels were generated, the sm_120 specification did not exist in the public domain. Consequently, these binaries contain:
+* SASS explicitly for Maxwell, Pascal, Volta, Turing, Ampere, Ada, and Hopper.
+* PTX usually only for the highest supported version at the time of the build (often compute_90).
+When the RTX 5090 driver attempts to execute these binaries, a fatal sequence of events occurs:
+1. The driver queries the binary for sm_120 SASS instructions. Result: Not found.
+2. The driver attempts to locate forward-compatible PTX (e.g., compute_120 or a generic lower version that it can JIT-compile at runtime).
+3. If the binary only contains sm_90 SASS and no suitable PTX that the new driver can up-convert to sm_120, the execution fails instantly with the "no kernel image is available" error.3
+2.2 The Critical Role of CUDA 12.8
+CUDA 12.8 is the foundational software toolkit that introduces the necessary compiler support (nvcc) for the sm_120 target.5 Previous toolkits, such as CUDA 12.4 or 12.6, physically lack the instruction definitions to generate code for Blackwell streaming multiprocessors.
+This creates a hard dependency: installing a PyTorch wheel built with CUDA 12.4 on an RTX 5090 is mechanically impossible to execute natively for CUDA-accelerated operations. Even if the NVIDIA driver (e.g., R570) is up to date, the application layer (PyTorch) must be linked against a CUDA runtime that understands the hardware. This necessitates the use of the PyTorch Nightly channel, which has been updated to build against CUDA 12.8.8
+2.3 The "Laptop GPU" Distinction
+The user query specifies an "RTX 5090 Laptop GPU." It is important to note that from a CUDA API perspective, the mobile and desktop variants of the RTX 5090 share the same Compute Capability (sm_120). While they differ significantly in thermal design power (TDP), memory capacity, and clock speeds, they require the exact same driver and software stack. Therefore, all instructions provided in this report apply equally to desktop and mobile workstations, provided the thermal throttling of the laptop form factor is managed during compilation workloads.11
+________________
+3. Operating System Strategy: The Case for WSL2
+While PyTorch maintains support for native Windows execution, the research data strongly suggests that WSL2 (Windows Subsystem for Linux) is the superior environment for deploying the RTX 5090, particularly during the early adoption phase of the Blackwell architecture.
+3.1 Limitations of Native Windows
+Running high-performance deep learning stacks directly on Windows presents several distinct challenges that are exacerbated with new hardware:
+* Dependency Friction: Libraries such as bitsandbytes (critical for quantization) and vLLM often have delayed or experimental support for Windows. Compiling these libraries from source on Windows requires a complex Visual Studio build toolchain that is prone to path length errors and ABI incompatibilities.12
+* Compilation Overhead: Compiling extensions like FlashAttention on Windows is notoriously difficult due to the MAX_PATH limitations and differences in the MSVC compiler versus GCC/NVCC on Linux.14
+* Container Support: Native Windows Docker containers do not support GPU acceleration in the same robust manner as Linux containers passed through WSL2.
+3.2 Advantages of WSL2
+WSL2 provides a full Linux kernel running alongside the Windows NT kernel, leveraging the GPU Paravirtualization (GPU-PV) technology. This allows the Linux instance to access the GPU hardware directly via the host Windows driver, resulting in near-native performance (typically within 1-2% of bare metal Linux).15
+Recommendation: The operational protocols detailed in this report assume a WSL2 environment running Ubuntu 22.04 LTS or 24.04 LTS. This aligns with NVIDIA's primary support vector for NGC containers and simplifies the compilation of complex dependencies.6
+________________
+4. Environment Prerequisites and Host Configuration
+Before attempting to install the PyTorch framework, the host system must be prepared with the correct drivers and virtualization support. The RTX 5090 requires bleeding-edge drivers that are not yet distributed via standard Windows Update channels.
+4.1 Host Driver Installation (Windows)
+The GPU driver must be installed on the Windows Host. Do not install a display driver inside the WSL2 Linux distribution; doing so will overwrite the passthrough libraries and break GPU access.18
+Protocol:
+1. Navigate to the NVIDIA Driver Downloads portal.
+2. Select GeForce RTX 50 Series (Notebooks) -> RTX 5090.
+3. Download and install Driver Version 570.xx or higher (R570 branch). This is the minimum driver branch required to support CUDA 12.8 and sm_120.6
+4. Perform a "Clean Install" to ensure no residual artifacts from older drivers conflict with the new HAL (Hardware Abstraction Layer).
+4.2 WSL2 Configuration and Optimization
+To ensure the WSL2 environment can handle the memory-intensive operations associated with the RTX 5090 (16GB/32GB variants), specific configurations are required.
+Step 1: Install/Update WSL
+Open PowerShell as Administrator and execute:
+
+
+PowerShell
+
+
+
+
+wsl --install
+wsl --update
+
+The wsl --update command is critical as it ensures the Linux kernel within WSL is updated to a version compatible with the latest GPU-PV protocols.20
+Step 2: Install Ubuntu Distribution
+If not already installed:
+
+
+PowerShell
+
+
+
+
+wsl --install -d Ubuntu-24.04
+
+Step 3: Global Configuration (.wslconfig)
+By default, WSL2 restricts memory usage to 50% of the host RAM. For deep learning, this often leads to premature OOM (Out of Memory) errors during model loading or compilation. Create a file named .wslconfig in your Windows User directory (C:\Users\<YourUser>\.wslconfig):
+
+
+Ini, TOML
+
+
+
+
+[wsl2]
+memory=32GB  # Adjust based on your system RAM (leave 4-8GB for Windows)
+processors=16 # Adjust based on your CPU core count
+swap=16GB
+
+Restart WSL2 (wsl --shutdown) for these changes to take effect.
+Step 4: Verify GPU Visibility
+Enter the Ubuntu terminal and verify the hardware is visible:
+
+
+Bash
+
+
+
+
+nvidia-smi
+
+The output must display the RTX 5090 and a Driver Version >= 570. If this command fails or does not show the GPU, verify the Windows host driver installation.21
+________________
+5. Deployment Method A: Native PyTorch Nightly Installation
+This method is recommended for personal development environments where direct access to the code and rapid iteration are priorities. It relies on the "Nightly" (Preview) channel of PyTorch, which is currently the only source for pre-built wheels targeting CUDA 12.8.
+5.1 Python Environment Setup
+It is strongly advised to use a virtual environment to prevent system-wide package conflicts. PyTorch Nightly builds are available for Python 3.9 through 3.13, though Python 3.10 or 3.11 are recommended for maximum compatibility with third-party libraries.10
+
+
+Bash
+
+
+
+
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Python dependencies and basic tools
+sudo apt install -y python3-pip python3-venv libopenblas-base build-essential
+
+# Create a dedicated virtual environment for Blackwell
+python3 -m venv ~/blackwell_env
+source ~/blackwell_env/bin/activate
+
+5.2 Installing PyTorch Nightly (CUDA 12.8)
+The installation command must explicitly target the nightly repository and the CUDA 12.8 compute platform.
+Command:
+
+
+Bash
+
+
+
+
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+Detailed Breakdown of Flags:
+* --pre: Instructs pip to include pre-release versions. Without this, pip may default to the latest stable version (e.g., 2.5.1), which does not support the 5090.23
+* --index-url.../cu128: This is the critical directive. It redirects the package manager to NVIDIA's specific wheel repository for CUDA 12.8. The standard PyPI repository does not host these builds.
+Timeline for Stability: While this nightly build is currently the only option, official stable support (PyTorch 2.7) is expected to be released around April 2026. Until then, users must rely on these preview builds for native sm_120 support.5
+5.3 Verification and Functional Testing
+Merely installing the package is insufficient; functional verification is required to confirm that the sm_120 kernels are being correctly loaded.
+Verification Script:
+
+
+Python
+
+
+
+
+import torch
+import sys
+
+print(f"Python Version: {sys.version}")
+print(f"PyTorch Version: {torch.__version__}")
+print(f"CUDA Version: {torch.version.cuda}")
+print(f"CUDA Available: {torch.cuda.is_available()}")
+
+if torch.cuda.is_available():
+   device = torch.device("cuda")
+   props = torch.cuda.get_device_properties(device)
+   print(f"Device Name: {props.name}")
+   print(f"Compute Capability: {props.major}.{props.minor}")
+   print(f"Architecture List: {torch.cuda.get_arch_list()}")
+   
+   # Tensor Core Test
+   try:
+       x = torch.randn(1024, 1024, device=device, dtype=torch.float16)
+       y = torch.randn(1024, 1024, device=device, dtype=torch.float16)
+       z = torch.matmul(x, y)
+       print("SUCCESS: FP16 Matrix Multiplication executed on Tensor Cores.")
+   except Exception as e:
+       print(f"FAILURE: Kernel execution error: {e}")
+else:
+   print("FATAL: CUDA is not available. Check driver and installation.")
+
+Expected Output Analysis:
+* PyTorch Version: Should be 2.7.0.dev... (or higher).24
+* CUDA Version: Must be 12.8.8
+* Architecture List: Must explicitly include sm_120 or compute_120. If the list stops at sm_90, the wrong wheel was installed.24
+________________
+6. Deployment Method B: Docker & NVIDIA NGC Containers
+For production deployments, reproducibility, and enterprise workflows, NVIDIA NGC containers are the preferred method. These containers are pre-packaged with the entire CUDA Toolkit, cuDNN, and PyTorch, all optimized for the specific architecture.
+6.1 Configuring Docker for WSL2
+While Docker Desktop handles basic integration, advanced usage requires the NVIDIA Container Toolkit to be configured within the WSL2 instance. This allows for the use of the Container Device Interface (CDI) and proper GPU passthrough.
+Step 1: Install Docker
+Inside WSL2:
+
+
+Bash
+
+
+
+
+curl https://get.docker.com | sh \
+ && sudo systemctl --now enable docker
+
+Step 2: Install NVIDIA Container Toolkit
+The toolkit acts as the bridge between the Docker daemon and the host GPU driver.
+
+
+Bash
+
+
+
+
+# Add the package repositories
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+ && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+ sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+ sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Install the toolkit
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+
+# Configure the runtime
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+.25
+6.2 The Blackwell-Optimized Container (NGC 25.01+)
+NVIDIA released the 25.01 tag in January 2026, which is the first container image explicitly optimized for the Blackwell architecture. It includes PyTorch 2.7 (Nightly equivalent), CUDA 12.8, and updated math libraries (cuBLAS, cuDNN) that are aware of sm_120.17
+Pull Command:
+
+
+Bash
+
+
+
+
+docker pull nvcr.io/nvidia/pytorch:25.01-py3
+
+Run Command:
+
+
+Bash
+
+
+
+
+docker run --gpus all -it --rm \
+ --name blackwell_torch \
+ --ipc=host \
+ --ulimit memlock=-1 \
+ --ulimit stack=67108864 \
+ -v $(pwd):/workspace \
+ nvcr.io/nvidia/pytorch:25.01-py3
+
+Key Configuration Flags:
+* --gpus all: Critical for passing the RTX 5090 to the container.
+* --ipc=host: PyTorch uses shared memory for DataLoader workers. Without this flag, large model training will crash with "Bus error" due to default Docker shared memory limits.27
+* --ulimit memlock=-1: Removes limits on locked memory, essential for high-performance pinned memory operations.
+6.3 NeMo Framework Considerations
+For users leveraging the NVIDIA NeMo framework (for LLMs or ASR), the standard PyTorch container is insufficient. You must use the NeMo-specific container, which layers the NeMo toolkit and its dependencies (Megatron-Core, TransformerEngine) on top of the base PyTorch image.
+NeMo Container Tag: nvcr.io/nvidia/nemo:25.01 (or later).
+* Note: Early reports indicate that NeMo containers may require specific attention backend flags (e.g., NVTE_FLASH_ATTN=0 or 1) depending on the specific model architecture being trained on Blackwell.29
+________________
+7. Critical Ecosystem Extensions and Compilation
+The core PyTorch installation is often just the foundation. Modern AI workflows rely on a suite of compiled extensions—FlashAttention, bitsandbytes, AutoGPTQ—that interface directly with the hardware. These extensions are the most frequent point of failure on new architectures like sm_120.
+7.1 FlashAttention (FA2, FA3, FA4)
+FlashAttention is critical for the performance of Transformer models. The versioning landscape is complex for Blackwell:
+* FlashAttention-2: Supported on sm_120 but requires compilation from source with CUDA 12.8.
+* FlashAttention-3: Primarily optimized for Hopper (sm_90) and may not yield benefits or even compile correctly on Blackwell without specific patches.31
+* FlashAttention-4: The beta version explicitly designed for Blackwell (sm_100/sm_120). It is currently in active development.33
+Compilation Protocol (FlashAttention-2 on Blackwell):
+You cannot install this via pip install flash-attn because the default wheels on PyPI are built with older CUDA toolkits.
+1. Install Build Tools:
+Bash
+pip install packaging ninja
+
+2. Clone and Build:
+Bash
+git clone https://github.com/Dao-AILab/flash-attention
+cd flash-attention
+
+# Force the builder to target Blackwell only (speeds up build significantly)
+export TORCH_CUDA_ARCH_LIST="12.0"
+
+# Disable build isolation to force usage of the local PyTorch Nightly
+pip install. --no-build-isolation
+
+Insight: The --no-build-isolation flag is mandatory. Without it, pip creates a temporary isolated environment and attempts to install the stable version of PyTorch into it to build the wheel. Since stable PyTorch is incompatible with CUDA 12.8, the build will fail with header mismatches.34
+7.2 bitsandbytes (Quantization)
+bitsandbytes (bnb) is essential for running large models on limited VRAM (e.g., 4-bit loading). The library relies on pre-compiled CUDA binaries (.so or .dll files).
+   * Requirement: The library must load a binary named libbitsandbytes_cu128.so.
+   * Installation: As of version 0.45.0+, bitsandbytes has added multi-backend support.
+Bash
+pip install bitsandbytes --upgrade
+
+   * Troubleshooting: If you receive a warning "compiled without GPU support," it indicates the library failed to find the CUDA 12.8 runtime libraries. Ensure that LD_LIBRARY_PATH includes your CUDA installation directory.36
+7.3 AutoGPTQ and ExLlamaV2
+These libraries are notoriously sensitive to CUDA versions.
+      * AutoGPTQ: Standard wheels typically fail with ptxas fatal : Value 'sm_120' is not defined. This error confirms that the nvcc compiler used during the build process was older than 12.8.
+      * Remediation: Build from source using the system CUDA 12.8 toolkit.
+Bash
+git clone https://github.com/PanQiWei/AutoGPTQ
+cd AutoGPTQ
+export TORCH_CUDA_ARCH_LIST="12.0"
+pip install. --no-build-isolation
+
+.38
+________________
+8. Specific Workload Compatibility and Case Studies
+8.1 Qwen2.5-VL and Multimodal Models
+Users attempting to run the latest vision-language models like Qwen2.5-VL on RTX 5090 have reported specific issues related to the transformers library and attention backends.
+         * Issue: The model requires FlashAttention-2 for efficient inference, but standard installations fail to load the kernel on sm_120.
+         * Solution: Follow the FlashAttention compilation steps in Section 7.1. Additionally, ensure transformers is upgraded to v4.50+ to recognize the new hardware mappings.40
+         * Alternative: If FlashAttention fails, use attn_implementation="sdpa" (Scaled Dot Product Attention), which utilizes PyTorch's native kernels (including cudnn_flash_attention) that are already updated in the nightly build.42
+8.2 ComfyUI and Stable Diffusion
+The creative AI community faces unique challenges because tools like ComfyUI often use "Portable" embedded Python environments that are difficult to update.
+         * Problem: Portable installs ship with stable PyTorch (e.g., 2.5.1) and older CUDA libraries. Launching ComfyUI results in immediate crashes or CPU fallback.
+         * Strategy: Users must manually replace the environment.
+         1. Delete the python_embeded folder (or rename it).
+         2. Point the run_nvidia_gpu.bat script to the system Python executable (from the WSL2 or native environment set up in Method A).
+         3. Reinstall requirements.txt using the specific Nightly command provided in Section 5.2.43
+________________
+9. Troubleshooting Dictionary
+
+
+Error Message
+	Root Cause
+	Remediation
+	RuntimeError: CUDA error: no kernel image is available for execution on the device
+	PyTorch version is too old (Stable 2.5/2.6). Binary lacks sm_120 instructions.
+	Upgrade to PyTorch Nightly (cu128).
+	UserWarning: NVIDIA GeForce RTX 5090 with CUDA capability sm_120 is not compatible...
+	PyTorch capability check detects sm_120 but the supported arch list stops at sm_90.
+	Upgrade to PyTorch Nightly; cosmetic in rare cases, usually fatal.
+	nvcc fatal : Unsupported gpu architecture 'compute_120'
+	You are building an extension with a CUDA Toolkit older than 12.8.
+	Install CUDA Toolkit 12.8 system-wide; check $PATH.
+	pynvml.NVMLError_NotSupported: Not Supported (in Docker)
+	Host driver is not exposing power telemetry correctly to the container.
+	Add --privileged to docker run command or update host driver.45
+	ImportError: libbitsandbytes_cu128.so: cannot open shared object file
+	bitsandbytes cannot find the CUDA 12.8 runtime.
+	Verify LD_LIBRARY_PATH or reinstall bitsandbytes ensuring CUDA is active.
+	________________
+10. Timeline and Future Outlook
+The current ecosystem is in a state of rapid transition. The "bleeding edge" status of the RTX 5090 requires navigating beta software, but stability is on the horizon.
+         * Q1 2026 (Current): Reliance on PyTorch Nightly and source-built extensions. NGC containers are the most stable option for production-like workloads.
+         * April 2026 (Projected): Release of PyTorch 2.7 Stable. This release is expected to officially integrate CUDA 12.8 and sm_120 support into the default pip wheels, eliminating the need for the --pre and --index-url flags.
+         * Mid-2026: Ecosystem maturity. Libraries like vLLM, transformers, and accelerate will update their CI/CD pipelines to build against PyTorch 2.7/CUDA 12.8, making pip install "just work" again.
+Conclusion: The NVIDIA RTX 5090 is fully capable of executing PyTorch workloads today, provided the operator bypasses the standard release channels. By adopting the WSL2 + PyTorch Nightly strategy or utilizing NGC Containers, the hardware's capabilities can be fully unlocked. The "incompatibility" warning is not a hardware defect, but a temporary software lag that is resolvable through the precise configuration steps detailed above.
+Works cited
+         1. RTX 5090 Training Issues - PyTorch Doesn't Support Blackwell Architecture Yet? - Reddit, accessed January 22, 2026, https://www.reddit.com/r/LocalLLaMA/comments/1law1go/rtx_5090_training_issues_pytorch_doesnt_support/
+         2. NVIDIA GeForce RTX 5090 with CUDA capability sm_120 is not compatible with the current PyTorch installation, accessed January 22, 2026, https://discuss.pytorch.org/t/nvidia-geforce-rtx-5090-with-cuda-capability-sm-120-is-not-compatible-with-the-current-pytorch-installation/216518
+         3. Add official support for CUDA sm_120 (RTX 5090 / Blackwell architecture) #159207 - GitHub, accessed January 22, 2026, https://github.com/pytorch/pytorch/issues/159207
+         4. Rtx 5090 - GPU - Hardware - NVIDIA Developer Forums, accessed January 22, 2026, https://forums.developer.nvidia.com/t/rtx-5090/331369
+         5. PyTorch 2.7 Release, accessed January 22, 2026, https://pytorch.org/blog/pytorch-2-7/
+         6. Software Migration Guide for NVIDIA Blackwell RTX GPUs: A Guide to CUDA 12.8, PyTorch, TensorRT, and Llama.cpp - AI & Data Science, accessed January 22, 2026, https://forums.developer.nvidia.com/t/software-migration-guide-for-nvidia-blackwell-rtx-gpus-a-guide-to-cuda-12-8-pytorch-tensorrt-and-llama-cpp/321330
+         7. CUDA Toolkit 12.8 what GPU is 'sm_120'? - NVIDIA Developer Forums, accessed January 22, 2026, https://forums.developer.nvidia.com/t/cuda-toolkit-12-8-what-gpu-is-sm-120/322128
+         8. RTX 5090 not working with PyTorch and Stable Diffusion (sm_120 unsupported), accessed January 22, 2026, https://forums.developer.nvidia.com/t/rtx-5090-not-working-with-pytorch-and-stable-diffusion-sm-120-unsupported/338015
+         9. Is there a PyTorch build that supports NVIDIA RTX 5090 (Compute Capability 12.0 / sm_120)?, accessed January 22, 2026, https://discuss.pytorch.org/t/is-there-a-pytorch-build-that-supports-nvidia-rtx-5090-compute-capability-12-0-sm-120/223536
+         10. The nightly binary with CUDA 12.8 - PyTorch Forums, accessed January 22, 2026, https://discuss.pytorch.org/t/the-nightly-binary-with-cuda-12-8/218165
+         11. RTX 5070 Ti (sm_120) not supported in PyTorch/TensorFlow — urgent request for Blackwell support - CUDA-GDB - NVIDIA Developer Forums, accessed January 22, 2026, https://forums.developer.nvidia.com/t/rtx-5070-ti-sm-120-not-supported-in-pytorch-tensorflow-urgent-request-for-blackwell-support/355866
+         12. When will Pytorch officially support cuda 12.8 of rtx5090? - Reddit, accessed January 22, 2026, https://www.reddit.com/r/pytorch/comments/1isa608/when_will_pytorch_officially_support_cuda_128_of/
+         13. Which cuda version to choose when installing pytorch, accessed January 22, 2026, https://discuss.pytorch.org/t/which-cuda-version-to-choose-when-installing-pytorch/217257
+         14. unable to install flash-attn 2.7.4 post1 · Issue #1607 · Dao-AILab/flash-attention - GitHub, accessed January 22, 2026, https://github.com/Dao-AILab/flash-attention/issues/1607
+         15. Enable NVIDIA CUDA on WSL 2 | Microsoft Learn, accessed January 22, 2026, https://learn.microsoft.com/en-us/windows/ai/directml/gpu-cuda-in-wsl
+         16. CUDA on WSL User Guide - NVIDIA Documentation, accessed January 22, 2026, https://docs.nvidia.com/cuda/wsl-user-guide/index.html
+         17. PyTorch Release 25.01 - NVIDIA Docs, accessed January 22, 2026, https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-01.html
+         18. Installation of older CUDA versions on WSL2 - NVIDIA Developer Forums, accessed January 22, 2026, https://forums.developer.nvidia.com/t/installation-of-older-cuda-versions-on-wsl2/259578
+         19. PyTorch Release 25.02 - NVIDIA Docs, accessed January 22, 2026, https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/rel-25-02.html
+         20. How to install CUDA on WSL2 - DEV Community, accessed January 22, 2026, https://dev.to/gabriellavoura/how-to-install-cuda-on-wsl2-45g6
+         21. I Was The First Person to Run PyTorch on RTX 5090 via WSL2 Docker (August 2025), accessed January 22, 2026, https://medium.com/@genelab_999/i-was-the-first-person-to-run-pytorch-on-rtx-5090-via-wsl2-docker-august-2025-8e2a624f3fbf
+         22. TensorFlow 25.01 + CUDA 12.8 + RTX 5090 WSL2 pe: "CUDA initialize hone mein fail" (Error 500) problem hai. - Reddit, accessed January 22, 2026, https://www.reddit.com/r/tensorflow/comments/1iutjoj/tensorflow_2501_cuda_128_rtx_5090_on_wsl2_cuda/?tl=hi-latn
+         23. Get Started - PyTorch, accessed January 22, 2026, https://pytorch.org/get-started/locally/
+         24. Pytorch support for sm120 - deployment, accessed January 22, 2026, https://discuss.pytorch.org/t/pytorch-support-for-sm120/216099
+         25. Installing the NVIDIA Container Toolkit, accessed January 22, 2026, https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+         26. PyG Release 25.01 - NVIDIA Docs, accessed January 22, 2026, https://docs.nvidia.com/deeplearning/frameworks/pyg-release-notes/rel-25-01.html
+         27. GPU support in Docker Desktop for Windows - Docker Docs, accessed January 22, 2026, https://docs.docker.com/desktop/features/gpu/
+         28. Add nvidia runtime to docker runtimes on windows WSL - Stack Overflow, accessed January 22, 2026, https://stackoverflow.com/questions/77323535/add-nvidia-runtime-to-docker-runtimes-on-windows-wsl
+         29. Nemotron-3-Nano 30B long context retrieval fails on 4 x RTX PRO 6000 (SM120) - NVIDIA vLLM containers perform worse than community vLLM, accessed January 22, 2026, https://forums.developer.nvidia.com/t/nemotron-3-nano-30b-long-context-retrieval-fails-on-4-x-rtx-pro-6000-sm120-nvidia-vllm-containers-perform-worse-than-community-vllm/356433
+         30. Software Component Versions — NVIDIA NeMo Framework User Guide, accessed January 22, 2026, https://docs.nvidia.com/nemo-framework/user-guide/latest/softwarecomponentversions.html
+         31. FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision - PyTorch, accessed January 22, 2026, https://pytorch.org/blog/flashattention-3/
+         32. Dao-AILab/flash-attention: Fast and memory-efficient exact attention - GitHub, accessed January 22, 2026, https://github.com/Dao-AILab/flash-attention
+         33. We reverse-engineered Flash Attention 4 - Modal, accessed January 22, 2026, https://modal.com/blog/reverse-engineer-flash-attention-4
+         34. FlashAttention doesn't support SM120 (RTX 50 series, e.g. RTX 5070 Ti) in GR00T on Windows · Issue #309 · NVIDIA/Isaac-GR00T - GitHub, accessed January 22, 2026, https://github.com/NVIDIA/Isaac-GR00T/issues/309
+         35. [Info Sharing] Success Combination for Blackwell (RTX5090) / NO BUILD TIME (using whl) · Issue #2016 · Dao-AILab/flash-attention - GitHub, accessed January 22, 2026, https://github.com/Dao-AILab/flash-attention/issues/2016
+         36. Cuda 12.9 support · Issue #1642 - GitHub, accessed January 22, 2026, https://github.com/bitsandbytes-foundation/bitsandbytes/issues/1642
+         37. Cuda 12.8 Support / RTX Blackwell · Issue #358 · cocktailpeanut/fluxgym - GitHub, accessed January 22, 2026, https://github.com/cocktailpeanut/fluxgym/issues/358
+         38. Quick Guide For Fixing/Installing Python, PyTorch, CUDA, Triton, Sage Attention and Flash Attention : r/StableDiffusion - Reddit, accessed January 22, 2026, https://www.reddit.com/r/StableDiffusion/comments/1k23rwv/quick_guide_for_fixinginstalling_python_pytorch/
+         39. Patch to enable PyTorch on RTX 5080 cuda 12.8 + sm_120 / Blackwell support - Reddit, accessed January 22, 2026, https://www.reddit.com/r/CUDA/comments/1jhvtqm/patch_to_enable_pytorch_on_rtx_5080_cuda_128_sm/
+         40. Qwen/Qwen2.5-VL-7B-Instruct — vllm-ascend, accessed January 22, 2026, https://docs.vllm.ai/projects/ascend/en/v0.11.0/developer_guide/evaluation/accuracy_report/Qwen2.5-VL-7B-Instruct.html
+         41. Qwen2.5-VL - Hugging Face, accessed January 22, 2026, https://huggingface.co/docs/transformers/v4.50.0/model_doc/qwen2_5_vl
+         42. Qwen2.5-VL - Hugging Face, accessed January 22, 2026, https://huggingface.co/docs/transformers/v4.49.0/en/model_doc/qwen2_5_vl
+         43. What PyTorch and CUDA versions have you successfully used with RTX 5090 and WAN i2v? : r/comfyui - Reddit, accessed January 22, 2026, https://www.reddit.com/r/comfyui/comments/1mhs4n2/what_pytorch_and_cuda_versions_have_you/
+         44. Nvidia 50 Series (Blackwell) support thread: How to get ComfyUI running on your new 50 series GPU. #6643 - GitHub, accessed January 22, 2026, https://github.com/Comfy-Org/ComfyUI/discussions/6643
+         45. Boltz-2 Container DGX Deployment Issue - NVIDIA Developer Forums, accessed January 22, 2026, https://forums.developer.nvidia.com/t/boltz-2-container-dgx-deployment-issue/353775

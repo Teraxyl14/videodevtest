@@ -1,0 +1,152 @@
+TECHNOLOGY STACK AUDIT - DEEP RESEARCH PROMPT
+==============================================
+
+PROJECT CONTEXT
+---------------
+Building an Autonomous Trend Agent that:
+1. Discovers trending topics online
+2. Sources 20-minute long-form videos about those trends
+3. Analyzes and transcribes the content
+4. Intelligently edits into 3-4 viral-ready vertical shorts (9:16)
+5. Adds captions, smart reframing, and context-aware effects
+6. Outputs organized content with metadata
+
+Hardware: NVIDIA RTX 5080 Mobile (16GB VRAM, Blackwell sm_120), Intel Core Ultra 7 255HX, 32GB DDR5
+
+================================================================================
+COMPONENT 1: EXECUTION ENVIRONMENT
+================================================================================
+Current Setup:
+- Docker NGC Containers: nvcr.io/nvidia/pytorch:25.01-py3
+- CUDA Version: 12.8+ via container
+- Python: 3.12 (container default)
+- Host OS: Windows 11 with Docker Desktop
+
+Questions:
+- Is there a more lightweight container option that still supports sm_120?
+- Are there any Windows-native solutions now that support Blackwell GPUs?
+- Is WSL2 with native Linux PyTorch better than Docker for this use case?
+
+================================================================================
+COMPONENT 2: VISION LANGUAGE MODEL (VIDEO UNDERSTANDING)
+================================================================================
+Current Setup:
+- Model: Qwen2.5-VL 7B Instruct
+- Usage: Scene analysis, content tagging, segment identification
+- Quantization: GGUF Q4/Q8 for memory efficiency
+- Framework: Transformers + qwen-vl-utils
+
+Questions:
+- Is Qwen3-VL now available and better for video understanding?
+- Are there specialized video understanding models (not image-adapted VLMs)?
+- What's the current best open-source VLM for timestamp-aware video analysis?
+- Are there smaller models (<3B params) that can do basic scene detection?
+
+================================================================================
+COMPONENT 3: SPEECH-TO-TEXT (TRANSCRIPTION)
+================================================================================
+Current Setup:
+- Model: NVIDIA Parakeet TDT 0.6B
+- Framework: NeMo Toolkit
+- Features: Word-level timestamps, ~10x realtime
+
+Questions:
+- Is Whisper V4 or newer Whisper variants now available?
+- Does Parakeet TDT 1.0 or 1.1B exist with better accuracy?
+- Are there models that output speaker diarization + timestamps together?
+- What's the fastest open-source ASR model for 16GB VRAM in January 2026?
+
+================================================================================
+COMPONENT 4: OBJECT TRACKING (SMART REFRAMING)
+================================================================================
+Current Setup:
+- Model: OpenCV Haar Cascades (face detection)
+- Alternative Considered: SAM 2 (disabled due to complexity)
+- Usage: Track subject for 16:9 to 9:16 crop
+
+Questions:
+- Is YOLO v10 or v11 available? Better for real-time tracking?
+- Is SAM 2.1 or SAM 3 now stable and easier to deploy?
+- Are there lightweight face/person tracking models optimized for video?
+- What's the best balance of speed vs accuracy for subject tracking in 2026?
+
+================================================================================
+COMPONENT 5: VIDEO PROCESSING
+================================================================================
+Current Setup:
+- Encoding: FFmpeg with NVENC (GPU)
+- Frame Extraction: FFmpeg (exact timestamps)
+- Reframing: Python + OpenCV
+- Captions: FFmpeg drawtext filter
+
+Questions:
+- Is there a Python library that wraps FFmpeg more elegantly than subprocess?
+- Are there GPU-accelerated Python video processing libraries (like DALI)?
+- Is NVENC still the best encoder, or is there a newer NVIDIA encoder?
+- Are there specialized "short-form video toolkits" for automated editing?
+
+================================================================================
+COMPONENT 6: CAPTION STYLING
+================================================================================
+Current Setup:
+- Method: FFmpeg drawtext with custom fonts
+- Word Highlighting: Frame-by-frame text rendering
+- Style: Static (not animated)
+
+Questions:
+- Are there tools that generate TikTok/Instagram-style animated captions?
+- Is there a library for "bouncing/scaling" word-by-word caption effects?
+- What tools do professional short-form creators use for captions?
+- Are there open-source Remotion alternatives in Python?
+
+================================================================================
+COMPONENT 7: TREND DISCOVERY (NOT IMPLEMENTED YET)
+================================================================================
+Planned:
+- Sources: YouTube Trending, Twitter/X, Google Trends
+- Method: API or scraping (TBD)
+
+Questions:
+- What APIs are available for real-time trend data in January 2026?
+- Is there an aggregated "trending topics" API across platforms?
+- Are there open-source trend analysis tools or libraries?
+- What's the best approach for demographic-specific trend filtering?
+
+================================================================================
+COMPONENT 8: SEGMENT SELECTION (NOT IMPLEMENTED YET)
+================================================================================
+Planned:
+- Method: Gemini Pro API for "viral potential" scoring
+
+Questions:
+- Is there an open-source alternative to using Gemini for this?
+- Are there models trained specifically on viral content patterns?
+- What metrics/algorithms predict "viral-worthiness" of video segments?
+- Can this be done locally to reduce API costs?
+
+================================================================================
+COMPONENT 9: CONTEXT-AWARE EFFECTS (NOT IMPLEMENTED YET)
+================================================================================
+Planned:
+- Zoom: On emphasized words
+- Shake: On impactful statements
+- Highlight: On-screen elements matching speech
+
+Questions:
+- Are there libraries for programmatic video effects in Python?
+- How do tools like CapCut/Premiere implement auto-zoom effects?
+- Is there a way to detect "emphasis" in speech (prosody analysis)?
+- Are there pre-built "effect templates" for short-form content?
+
+================================================================================
+SUMMARY OF WHAT I NEED
+================================================================================
+
+For each component above, please research:
+1. What's the current best-in-class option (January 2026)?
+2. Is our current choice still optimal or is there something better?
+3. Specific version numbers and installation commands if applicable
+4. Compatibility notes with RTX 5080 Mobile (Blackwell/sm_120)
+5. Memory requirements (we have 16GB VRAM budget, 14GB usable)
+
+Please organize the response by component number (1-9) and provide actionable recommendations.

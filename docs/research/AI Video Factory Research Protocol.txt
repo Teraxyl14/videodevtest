@@ -1,0 +1,262 @@
+﻿2026 AI Video Factory: Full System Utilization Protocol for RTX 5080 Mobile
+1. Architectural Foundation: The Blackwell Mobile Paradigm
+The emergence of the NVIDIA GeForce RTX 5080 Mobile in early 2026 marks a definitive inflection point in the trajectory of decentralized creative computation. For the first time, a mobile chassis houses the computational density required to run a comprehensive, multimodal generative AI pipeline—a system we designate as the "AI Video Factory." This concept moves beyond isolated inference tasks, such as generating a single image or transcribing a voice note, and instead proposes a unified, autonomous production facility capable of ingesting raw media, understanding its semantic content, generating high-fidelity video extensions, synchronizing audio, and intelligently reframing outputs for diverse distribution channels. The feasibility of this factory rests entirely on the specific architectural innovations of the Blackwell GPU generation and the disciplined management of its resources.
+1.1 The GB203 Processor and Computational Density
+The RTX 5080 Mobile is built upon the GB203 silicon, a chip that represents a strategic balancing act between the raw power of the flagship GB202 and the thermal constraints of a laptop form factor. With approximately 8,192 CUDA cores, the mobile variant aligns more closely with the desktop RTX 5070 in terms of rasterization potential than its desktop namesake, yet it retains the critical architectural advancements that define the Blackwell generation.1 The chip operates within a flexible power envelope, typically ranging from 80 to 150 watts, a dynamic range that the Video Factory protocol exploits by modulating workload intensity based on thermal headroom.
+The defining feature for AI workloads is the integration of 5th Generation Tensor Cores. These specialized execution units are engineered to accelerate the massive matrix multiplication operations (GEMM) that underpin deep learning models. A pivotal enhancement in this generation is the native support for low-precision floating-point formats, specifically FP4 and FP8, alongside the standard INT8 and BF16 formats.2 This capability is not merely an incremental speedup; it fundamentally alters the memory-bandwidth equation. By processing data in FP8, the effective throughput of the tensor cores doubles compared to FP16, and memory footprint is halved, a critical optimization for fitting large foundational models like Wan2.2 into the limited video memory (VRAM) of a mobile workstation. The architecture also introduces support for Multi-Frame Generation (MFG) via DLSS 4, utilizing the optical flow accelerator to interpolate frames in real-time preview windows, essentially decoupling the viewport frame rate from the inference frame rate.1
+1.2 Memory Hierarchy: The GDDR7 Performance Cliff
+The most stringent constraint in the Video Factory protocol is memory capacity. The RTX 5080 Mobile is equipped with 16 GB of GDDR7 VRAM connected via a 256-bit bus.1 While 16 GB was considered ample for gaming in previous generations, it is the absolute minimum threshold for running modern 14-billion parameter generative models locally. The transition to GDDR7 technology, however, provides a significant bandwidth advantage. Utilizing PAM3 (Pulse Amplitude Modulation 3-level) signaling, GDDR7 transmits 1.5 bits per cycle, achieving a 50% efficiency gain over the PAM4 signaling of GDDR6X.4 This results in a peak memory bandwidth of approximately 896 GB/s.1
+This massive bandwidth—nearly 1 terabyte per second—ensures that when model weights are resident in VRAM, the compute units are rarely starved of data. However, the system faces a steep "performance cliff" once this 16 GB buffer is exceeded. When the GPU is forced to access system memory (DDR5 RAM) over the PCIe 5.0 bus, bandwidth drops precipitously to the 80–90 GB/s range, introducing latency that can throttle generation speeds by an order of magnitude.3 Therefore, the primary objective of the system utilization protocol is to manage the VRAM residency of active models. We must treat the 16 GB VRAM as a high-speed "hot" cache, cycling models in and out from system RAM only when absolutely necessary, and utilizing aggressive quantization strategies to maximize the utility of every gigabyte.
+1.3 CUDA 12.8 and the Software Stack
+The software foundation for leveraging the Blackwell architecture is the CUDA 12.8 toolkit (or later), which introduces specific optimizations for the SM_120 compute capability found in the RTX 50 series.6 Compatibility is a significant hurdle in the 2026 ecosystem; many legacy AI libraries rely on older CUDA versions (11.x or 12.1), which lack the kernel images necessary to execute on Blackwell silicon. This necessitates a rigorous environment management strategy.
+The protocol mandates the use of containerization or strictly isolated Python virtual environments to resolve these "dependency hell" scenarios. For instance, the audio transcription subsystem (Parakeet) often requires a specific version of the NeMo toolkit and PyTorch that may conflict with the requirements of the video generation subsystem (Wan2.2).8 By orchestrating these components through a unified interface like ComfyUI, which can manage disparate execution backends, the Video Factory ensures that each model runs within its optimal software context without destabilizing the broader system.
+________________
+2. Visual Understanding: The Qwen2.5-VL Intelligence Layer
+Before a video factory can modify or generate content, it must first possess the capacity to "see" and comprehend input media. This function is served by the Visual Understanding module, anchored by the Qwen2.5-VL 7B Instruct model. Chosen for its exceptional balance of performance and resource efficiency, Qwen2.5-VL acts as the automated director, analyzing raw footage to generate structured metadata, precise timestamps, and semantic descriptions that drive downstream generative tasks.
+2.1 Naive Dynamic Resolution and M-RoPE
+Qwen2.5-VL distinguishes itself from predecessor Vision-Language Models (VLMs) through its handling of visual inputs. Traditional models often resize images to a fixed low-resolution square (e.g., 336x336 pixels), destroying high-frequency details essential for professional video work. Qwen2.5-VL employs a "Naive Dynamic Resolution" mechanism that processes images at their native aspect ratios and varying resolutions, dynamically allocating tokens based on the information density of the visual input.9 This ensures that a wide cinematic shot (2.39:1) and a vertical social media clip (9:16) are understood in their native geometric contexts, preserving spatial relationships that are critical for editing decisions.
+Furthermore, the model integrates Multimodal Rotary Position Embeddings (M-RoPE). This architectural innovation decomposes positional information into temporal, height, and width components, effectively allowing the model to index video in 3D space-time.9 This capability is what transforms the model from a static image analyzer into a true video understanding engine. It enables the model to grasp causality and sequence—understanding that a character is running because they looked back in fear in the previous frame, rather than viewing the two events as disconnected snapshots.
+2.2 Benchmarking Video Comprehension
+The selection of Qwen2.5-VL is validated by its performance on the Video-MME benchmark, the industry standard for assessing multimodal capabilities. In the 2026 leaderboards, the Qwen2.5-VL 7B model achieves a score of approximately 65.1% to 71.6% (depending on subtitle integration), a performance tier that rivals and often exceeds significantly larger open-source models and even challenges proprietary commercial APIs like GPT-4o in specific sub-tasks.9
+Table 1: Comparative Performance on Video-MME Benchmark 9
+Model
+	Parameter Count
+	Overall Score (w/ subs)
+	Context Window
+	License
+	Qwen2.5-VL Instruct
+	7B
+	71.6%
+	128k+
+	Apache 2.0
+	VideoLLaMA 2
+	7B
+	50.3%
+	4k
+	Open
+	GPT-4o
+	Unknown
+	71.9%
+	128k
+	Proprietary
+	Gemini 1.5 Pro
+	Unknown
+	75.0%
+	1M+
+	Proprietary
+	Qwen2-VL
+	72B
+	77.8%
+	32k
+	Apache 2.0
+	The data indicates that while the massive 72B variant and Google's Gemini Pro hold the absolute crown, the 7B variant of Qwen2.5-VL delivers the highest efficiency-per-parameter, making it the only viable candidate for resident execution on a 16 GB mobile GPU. Its ability to process long-context inputs (videos over 1 hour) allows for comprehensive timeline analysis, enabling the system to "watch" an entire rush and identify specific events without hallucinating details.9
+2.3 Operational Workflow: The Automated Tagger
+In the Video Factory pipeline, Qwen2.5-VL is deployed via a custom ComfyUI node, typically ComfyUI-Qwen2.5-VL or ComfyUI-VLM-nodes.14 The workflow operates as a frame-sampling metadata extractor.
+1. Ingest: Raw video files are loaded and sampled at a customizable frame rate (e.g., 1 fps for talking heads, 4 fps for action sequences).
+2. Inference: The model is prompted with a structured system instruction designed to elicit JSON-formatted output. A typical prompt might be: "Analyze the visual sequence. Provide a JSON object with keys for 'scene_description', 'camera_angle', 'lighting_style', 'main_subject_action', and 'time_of_day'."
+3. Output Parsing: The model returns a structured description. For example:
+JSON
+{
+ "timestamp": "00:04:15",
+ "scene_description": "A cluttered cyberpunk workspace with neon blue lighting.",
+ "camera_angle": "High-angle, slow dolly in.",
+ "main_subject_action": "Protagonist typing furiously on a holographic keyboard.",
+ "lighting_style": "Volumetric, cold color temperature."
+}
+
+This metadata is not merely archival; it is functional. These descriptors are fed directly into the prompt conditioning for the generative model (Wan2.2) to ensure that any AI-generated extensions or in-painted elements match the stylistic attributes of the original footage perfectly.16
+2.4 Resource Optimization via Quantization
+Running the full FP16 weights of Qwen2.5-VL 7B would consume roughly 14–15 GB of VRAM, leaving no room for generation. To resolve this, the protocol utilizes GGUF quantization. By employing a Q4_K_M (4-bit) or Q6_K (6-bit) quantization scheme, the model's memory footprint is reduced to approximately 5–7 GB.18
+This reduction is transformative. It allows the vision model to reside in VRAM simultaneously with the audio subsystem or the OS overhead, facilitating rapid switching. While ComfyUI's "Smart Memory" management will typically unload the vision model before loading the generative model, the smaller footprint ensures that the system RAM swap file is less stressed, keeping the PCIe bus free for data transfer rather than thrashing.
+________________
+3. The Generative Core: Wan2.2 Video Synthesis
+The generative engine of the Video Factory is Wan2.2, specifically the 14-billion parameter variant (Wan2.2-14B). This model represents the state-of-the-art in open-weights video generation for 2026, utilizing a sophisticated architecture that combines the scalability of transformers with the generative fidelity of diffusion models. It is capable of producing 5-second clips at 720p resolution with high temporal coherence, serving as the primary tool for Text-to-Video (T2V) creation and Image-to-Video (I2V) animation.
+3.1 Diffusion Transformer and Mixture-of-Experts
+Wan2.2 departs from the U-Net architectures that dominated early stable diffusion video models. It employs a Diffusion Transformer (DiT) backbone, similar to the architecture used by OpenAI's Sora. This shift allows the model to handle video data as a sequence of spatiotemporal patches, scaling performance effectively with compute and data volume.20
+Crucially, Wan2.2 implements a Mixture-of-Experts (MoE) design. In a dense model, every parameter is active for every calculation. In an MoE model, the network is divided into specialized sub-networks ("experts"), and a gating mechanism routes data to only the relevant experts for a given token. This means that while the model has 14 billion parameters in total—providing a vast knowledge base—the active parameter count for any single inference step is significantly lower. This increases inference speed (throughput) without sacrificing the model's capacity to represent complex visual concepts. However, the VRAM challenge remains: all 14 billion parameters must be loaded into memory to be accessible by the router, even if they aren't all used simultaneously.20
+3.2 Solving the 14B/16GB Equation: GGUF Implementation
+The central technical challenge for the RTX 5080 Mobile is fitting the 14B model into 16 GB of VRAM. A standard FP16 load would require ~28 GB. The solution is the use of GGUF quantization, a technique initially popularized for LLMs but now essential for diffusion transformers.
+The protocol mandates the use of the Wan2.2-14B-Q4_K_M.gguf quantization. This compresses the model weights to approximately 8.5 GB to 9.0 GB. Even with the additional overhead of the VAE (Variational Autoencoder, ~0.5 GB) and the frame buffer required for a 720p generation batch (typically 2-4 GB depending on sequence length), the total VRAM usage sits comfortably around 13-14 GB.23
+Subjective analysis and benchmarks suggest that the Q4 quantization retains over 95% of the visual fidelity of the uncompressed FP16 model. The stochastic nature of the diffusion process masks the minor precision errors that would be fatal in text generation, making this an ideal trade-off for video production. By avoiding the usage of the smaller 5B model, the factory ensures that output quality meets professional standards, as the 14B model significantly outperforms the 5B in prompt adherence and motion complexity.23
+3.3 Text-to-Video (T2V) and Image-to-Video (I2V) Modes
+The Factory utilizes Wan2.2 in two distinct operational modes within ComfyUI:
+Mode A: Text-to-Video (Synthesis)
+Used for generating B-roll or establishing shots from scratch. The workflow involves:
+   1. Text Encoding: The prompt is processed by the T5-XXL encoder. This encoder is massive (~4-5 GB). To save VRAM, the ComfyUI workflow is configured to load the T5 encoder into VRAM, process the prompt into embeddings, and then immediately unload it to system RAM before the diffusion model loads. This "baton pass" memory strategy is essential for the 16 GB envelope.21
+   2. Sampling: The diffusion loop runs for 20–50 steps. The model generates 81 frames (approx. 5 seconds at 16fps) at 1280x720 resolution.
+Mode B: Image-to-Video (Animation)
+Used to animate static assets or extend existing clips.
+   1. Conditioning: An input image is encoded by the VAE and serves as the visual anchor.
+   2. Motion Control: The user (or the automation script) specifies motion dynamics. Wan2.2 excels at "high noise" (large motion) and "low noise" (subtle motion) settings, allowing for granular control over the result. The I2V mode is particularly effective for "talking head" animation when combined with audio-driven lipsync workflows.22
+3.4 Acceleration: Flash Attention and Lightx2v
+To maximize the throughput of the RTX 5080's Blackwell Tensor Cores, the system utilizes Flash Attention 2/3. This algorithm optimizes the self-attention mechanism, the most compute-intensive part of the transformer, reducing memory complexity from quadratic to linear. This is critical for video, where the sequence length (height × width × time) is massive.26
+Additionally, the protocol integrates Lightx2v, a lightweight LoRA (Low-Rank Adaptation) or distillation technique. Lightx2v acts as a "turbo" button for Wan2.2, reducing the required sampling steps from 50 to as few as 4-8 while maintaining acceptable quality. This enables "Draft Mode" rapid iteration, allowing the user to generate 5-6 variations in the time it would take to render one full-quality clip. Once the best variation is selected, the Lightx2v LoRA is disabled, and the seed is reused for a high-fidelity render.21
+3.5 VBench Scores and Quality Assessment
+In the VBench leaderboard, a comprehensive suite for evaluating video generation, Wan2.2-14B demonstrates its superiority. It achieves top-tier scores in "Motion Smoothness" and "Temporal Consistency," outperforming open-source rivals like Mochi and older proprietary models. The model's ability to maintain subject identity across the 5-second window is a key differentiator, reducing the "dream-like" morphing artifacts common in earlier AI video.26
+Table 2: VBench Comparative Scores 28
+Metric
+	Wan2.2-14B
+	Cosmos-Predict 14B
+	Open-Sora 1.2
+	Overall Quality
+	0.769
+	0.768
+	0.75
+	Motion Smoothness
+	High
+	High
+	Medium
+	Prompt Adherence
+	0.810
+	0.805
+	0.78
+	This data confirms that Wan2.2 is currently the "apex predator" of open-weights video models, justifying the engineering effort required to run it on mobile hardware.
+________________
+4. Audio Intelligence: The Parakeet and Voxtral Subsystem
+Video is a multisensory medium; visual fidelity without synchronized, high-quality audio is insufficient. The Video Factory incorporates a dedicated Audio Intelligence layer designed to handle Automatic Speech Recognition (ASR), precise timestamping for editing, and semantic audio analysis. This subsystem leverages two primary models: NVIDIA's Parakeet TDT for speed and precision, and Mistral's Voxtral for comprehension.
+4.1 NVIDIA Parakeet TDT: Speed and Precision
+The workhorse of the audio pipeline is the Parakeet TDT 0.6B (Token-and-Duration Transducer) model. Unlike traditional CTC (Connectionist Temporal Classification) models that predict tokens at fixed time steps, TDT predicts both the token and its duration jointly. This architecture allows the model to skip over silence and redundant frames, resulting in inference speeds that are up to 50x faster than real-time (RTFx > 3000) on server hardware, and blazing fast on the RTX 5080.30
+   * Accuracy: Parakeet achieves a Word Error Rate (WER) of approximately 6.05% on standard benchmarks, rivaling much larger models like Whisper Large v3 while being a fraction of the size.
+   * Timestamping: The critical feature for the Video Factory is its support for word-level and segment-level timestamps. When transcribing a rush, Parakeet outputs a JSON file mapping every word to its exact start and end time (in milliseconds). This data is the "sync signal" for the automated editing system. If a script calls for a cut exactly when the speaker says "Action," the system uses these timestamps to place the cut frame-perfectly.30
+   * Native Windows Deployment: While NVIDIA provides NIM (Inference Microservices) containers for Parakeet, running Docker containers on Windows can introduce overhead. The protocol recommends a native Python implementation using the nemo_toolkit. By installing the toolkit in a dedicated Conda environment (to avoid the aforementioned dependency conflicts), the RTX 5080 can execute Parakeet directly on the GPU without the virtualization layer of WSL2, maximizing I/O throughput.30
+4.2 Mistral Voxtral: Semantic Reasoning
+While Parakeet excels at transcription, Voxtral (Mini 3B) excels at understanding. Voxtral is a multimodal language model trained natively on audio. It does not just convert speech to text; it processes the audio signal to understand tone, emotion, and non-verbal cues.35
+   * Context Window: With a 32k token context window, Voxtral can analyze up to 40 minutes of audio in a single pass.
+   * Use Cases:
+   * Semantic Cut Detection: A user can query the system: "Find all segments where the speaker sounds angry." Voxtral analyzes the prosody and content, returning timestamps for those specific emotional beats.
+   * Summarization: For long interviews or documentary footage, Voxtral provides concise summaries, allowing the editor to identify key soundbites without listening to the entire file.
+   * Function Calling: Voxtral supports function calling, meaning it can trigger external scripts based on audio triggers (e.g., "Computer, save this clip" spoken by the user could automatically trigger an export script).35
+4.3 The "Dependency Hell" Challenge and Solution
+Integrating Parakeet and Voxtral alongside video models on Windows is widely known to be difficult due to conflicting dependencies (e.g., specific versions of PyTorch, torchaudio, and CUDA). The Video Factory protocol solves this via Process Isolation.
+Instead of trying to force all models into a single Python environment, the ComfyUI architecture utilizes the ComfyUI-Job-Manager or simple subprocess calls. The audio processing runs in its own isolated Conda environment (env_audio), while the video generation runs in (env_video). Data is exchanged via standard JSON files on the disk. This decoupling ensures that an update to the video diffusion library does not break the delicate audio toolkit dependencies.8
+________________
+5. The Semantic Editor: SAM 2 & Smart Reframing
+The final stage of the pipeline transforms the generated and analyzed assets into a coherent video product. This involves the manipulation of visual elements within the frame—segmentation, tracking, and reframing—tasks that historically required tedious manual rotoscoping. The Video Factory automates this using Meta's Segment Anything Model 2 (SAM 2) and object detection networks like YOLOv8.
+5.1 SAM 2: Temporal Segmentation Memory
+SAM 2 represents a paradigm shift in video segmentation. Unlike its predecessor, which treated video as a stack of independent images, SAM 2 introduces a "memory bank" mechanism. It stores information about the object's appearance and location from previous frames, allowing it to maintain a persistent mask even when the object undergoes occlusion (is blocked by another object), deformation, or drastic lighting changes.37
+   * Zero-Shot Generalization: SAM 2 does not need to be trained on specific objects. A user (or the Qwen vision model) provides a prompt—a click, a bounding box, or a text description—on the first frame. SAM 2 then propagates this mask through the entire video sequence.
+   * Performance: The model is highly optimized. On the RTX 5080, the Hiera-based image encoder runs once per frame, while the lightweight mask decoder runs in real-time. This allows for interactive segmentation; a user can correct a mask on frame 50, and the model instantly updates the tracking for frames 51–100.37
+   * Application: This capability is used for advanced editing effects. For instance, "background replacement" becomes trivial: SAM 2 isolates the subject, and the background is replaced with a Wan2.2 generated environment, all composited automatically within ComfyUI.
+5.2 Smart Reframing: The Vertical Video Engine
+A pervasive requirement in modern content creation is the repurposing of horizontal (16:9) footage for vertical (9:16) platforms like TikTok and Instagram Reels. The Factory automates this with a "Smart Reframing" workflow.
+   1. Subject Detection (YOLOv8/Florence-2): The system scans the video using a lightweight object detection model (YOLOv8 or Florence-2) to identify the "Subject of Interest." This is typically the main speaker or the focal point of the action.38
+   2. Bounding Box Tracking: The model returns a stream of coordinates $(x, y, w, h)$ representing the subject's position in every frame.
+   3. Algorithmic Smoothing: Raw detection data is often jittery. The workflow passes these coordinates through a Kalman Filter or a temporal smoothing node in ComfyUI. This mathematical filter predicts the subject's movement and creates a smooth "virtual camera" path, eliminating the jerky, robotic movements associated with simple center-locking.40
+   4. Dynamic Crop: A specialized ComfyUI node (ComfyUI-AutoCrop or VideoHelperSuite) uses these smoothed coordinates to extract a 9:16 window from the 16:9 source. The result simulates a human camera operator panning to follow the action.41
+This automated pipeline allows the Factory to ingest a standard landscape video and output a perfectly framed vertical variant in a fraction of the time required for manual editing.
+________________
+6. System Orchestration: The ComfyUI "Factory" Workflow
+The individual power of Qwen, Wan, Parakeet, and SAM 2 is meaningless without a unified control layer. ComfyUI serves as the operating system for the Video Factory. Its node-based architecture allows for the visual programming of complex pipelines, where the output of one model becomes the input of another.
+6.1 The Hub-and-Spoke Architecture
+To manage the limited 16 GB VRAM, the Factory utilizes a "Hub-and-Spoke" workflow design. The system does not load all models simultaneously. Instead, it processes data in sequential phases, utilizing ComfyUI's ability to cache latents and images while unloading model weights.
+Phase 1: Ingest & Analysis (The Sensors)
+   * Active Models: Qwen2.5-VL (Quantized), Parakeet TDT.
+   * Data Flow: Load Video -> Qwen Node (Analysis) -> Parakeet Node (Transcription).
+   * Output: A master metadata JSON file containing the script, timestamps, and scene descriptions.
+   * VRAM State: ~6-8 GB utilized.
+Phase 2: Logic & Segmentation (The Brain)
+   * Active Models: SAM 2, YOLOv8.
+   * Data Flow: The JSON metadata triggers logic gates. If a scene requires reframing or effect application, SAM 2 loads. It generates masks based on the Qwen descriptions (e.g., "Mask the red car").
+   * VRAM State: ~4 GB utilized. (Previous models unloaded).
+Phase 3: Generation & Composition (The Hand)
+   * Active Models: Wan2.2-14B (GGUF).
+   * Data Flow: Wan Loader -> KSampler. The system generates B-roll or applies in-painting using the masks from Phase 2 and the prompts from Phase 1.
+   * VRAM State: ~14-16 GB utilized (Peak Load). This is the critical phase where strictly no other heavy processes can run.
+6.2 Key Custom Node Suites
+The implementation relies on specific community-developed custom nodes that bridge the gaps between these models:
+   * ComfyUI-GGUF: The essential loader for the quantized Wan2.2 model. It maps the GGUF weights to the PyTorch tensors expected by ComfyUI.23
+   * ComfyUI-VideoHelperSuite (VHS): Manages the loading, saving, and buffering of video frames. Critical for handling the high frame counts of video without exploding system RAM.43
+   * ComfyUI-KJNodes: Provides the utility logic for batch processing, allowing the system to iterate over a list of video files automatically.44
+   * ComfyUI-AutoCropFaces: Implements the specific logic for face detection and cropping used in the Smart Reframing workflow.42
+6.3 Memory Management Configuration
+The protocol explicitly configures ComfyUI's startup arguments to optimize for the mobile workstation environment:
+   * --highvram: Instructs ComfyUI to utilize the full 16 GB capacity before offloading.
+   * --smart-memory: Enables aggressive garbage collection of model weights immediately after execution.
+   * --gpu-device 0: Targets the discrete RTX 5080, preventing accidental usage of the integrated generic GPU.
+By strictly defining the order of operations—Analysis, then Segmentation, then Generation—the Factory ensures that the 16 GB VRAM is always saturated with relevant data, maximizing the ROI on the hardware.45
+________________
+7. Performance Benchmarks and Real-World Throughput
+Deploying this protocol on the RTX 5080 Mobile yields tangible performance metrics that validate the "Factory" designation. The following benchmarks are projected based on the hardware specifications and model efficiency profiles.
+7.1 Wan2.2 Inference Speed
+   * Configuration: Wan2.2-T2V-14B (Q4 GGUF), 1280x720, 25 steps.
+   * Throughput: Approximately 3.5 to 4.5 seconds per frame.
+   * Total Time: A standard 5-second clip (81 frames) generates in roughly 5–7 minutes.
+   * With Lightx2v (Draft Mode): Using the 4-step LoRA, generation time drops to under 60 seconds. This allows for rapid creative iteration before committing to the final render.26
+7.2 Qwen2.5-VL Analysis Speed
+   * Configuration: 7B Model (Q4 GGUF), 128k context.
+   * Throughput: The model processes visual tokens at extremely high speeds due to the FP8 tensor cores. Analyzing a 1-minute video (sampled at 1fps) takes approximately 15–20 seconds. This is faster than real-time playback.
+7.3 Parakeet Transcription Speed
+   * Configuration: Parakeet TDT 0.6B.
+   * Throughput: Transcribing 1 hour of high-quality audio takes approximately 60–90 seconds. The bottleneck is often the file read speed rather than the GPU inference.32
+7.4 Comparative Cost Analysis
+Running this Factory locally on the RTX 5080 significantly alters the economics of video production compared to cloud APIs.
+Table 3: Cost and Privacy Comparison
+Metric
+	RTX 5080 Local Factory
+	Cloud APIs (Runway/Luma/OpenAI)
+	Cost per Minute of Video
+	~$0.02 (Electricity)
+	~$5.00 - $15.00 (Subscription/Credits)
+	Privacy
+	100% Local (Air-gapped capable)
+	Data uploaded to 3rd party servers
+	Customization
+	Unlimited (LoRAs, ControlNet)
+	Limited by API endpoints
+	Latency
+	Low (Instant preview)
+	Variable (Queue times, Upload/Download)
+	While the initial hardware investment is high (premium laptop cost), the operational cost approaches zero, and the privacy guarantee is absolute—a critical factor for enterprise use cases involving sensitive IP.47
+________________
+8. Future Outlook: The 2026 Ecosystem
+The 2026 AI Video Factory is not a static endpoint but a foundation. As the year progresses, we anticipate further optimizations that will enhance the capabilities of the RTX 5080 Mobile.
+The rapid maturation of FP4 inference support in community backends (like llama.cpp and ComfyUI) suggests that we may soon be able to run the 14B models at even lower precision with minimal quality loss, potentially doubling inference speeds again.2 Additionally, the integration of "World Models" (simulators that understand physics) into the video generation pipeline is the next frontier. Models like Cosmos-Predict are already showing promise in predicting physically accurate future frames, and their distillation into mobile-friendly formats is inevitable.28
+The convergence of high-bandwidth mobile hardware (Blackwell), efficient model architectures (MoE, TDT), and sophisticated orchestration software (ComfyUI) has democratized high-end video production. The RTX 5080 Mobile, running the Video Factory protocol, is no longer just a laptop; it is a studio in a backpack, capable of turning raw ideas into polished, synchronized, and formatted video content at the edge of the network. The era of the personal AI media powerhouse has arrived.
+Works cited
+   1. Nvidia GeForce RTX 5080 Laptop - Benchmarks and Specs - NotebookCheck.net Tech, accessed January 18, 2026, https://www.notebookcheck.net/Nvidia-GeForce-RTX-5080-Laptop-Benchmarks-and-Specs.934946.0.html
+   2. GeForce RTX 5080 Graphics Cards - NVIDIA, accessed January 18, 2026, https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/
+   3. NVIDIA GeForce RTX 5080 Mobile Specs | TechPowerUp GPU Database, accessed January 18, 2026, https://www.techpowerup.com/gpu-specs/geforce-rtx-5080-mobile.c4236
+   4. NVIDIA RTX BLACKWELL GPU ARCHITECTURE, accessed January 18, 2026, https://images.nvidia.com/aem-dam/Solutions/geforce/blackwell/nvidia-rtx-blackwell-gpu-architecture.pdf
+   5. Why not Qwen3-30B Quantized over qwen3-14B or gemma-12B? : r/LocalLLaMA - Reddit, accessed January 18, 2026, https://www.reddit.com/r/LocalLLaMA/comments/1q62pyh/why_not_qwen330b_quantized_over_qwen314b_or/
+   6. Compatibility of older CUDA versions with RTX 5090 (Blackwell), accessed January 18, 2026, https://forums.developer.nvidia.com/t/compatibility-of-older-cuda-versions-with-rtx-5090-blackwell/350503
+   7. Total Noob : When will CUDA-compatible PyTorch builds support the RTX 5090 (sm_120)?, accessed January 18, 2026, https://www.reddit.com/r/CUDA/comments/1k4gbom/total_noob_when_will_cudacompatible_pytorch/
+   8. Got tired of slow legacy Whisper. Built a custom stack (Faster-Whisper + Pyannote 4.0) on CUDA 12.8. The alignment is now O(N) and flies. : r/LocalLLaMA - Reddit, accessed January 18, 2026, https://www.reddit.com/r/LocalLLaMA/comments/1pqes8u/got_tired_of_slow_legacy_whisper_built_a_custom/
+   9. Qwen/Qwen2.5-VL-7B-Instruct - Hugging Face, accessed January 18, 2026, https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
+   10. Video Panels for Long Video Understanding - arXiv, accessed January 18, 2026, https://arxiv.org/html/2509.23724v1
+   11. aws-prototyping/OmniLong-Qwen2.5-VL-7B - Hugging Face, accessed January 18, 2026, https://huggingface.co/aws-prototyping/OmniLong-Qwen2.5-VL-7B
+   12. HumanVideo-MME: Benchmarking MLLMs for Human-Centric Video Understanding - arXiv, accessed January 18, 2026, https://arxiv.org/html/2507.04909v2
+   13. The First-Ever Comprehensive Evaluation Benchmark of Multi-modal LLMs in Video Analysis - Video-MME, accessed January 18, 2026, https://video-mme.github.io/home_page.html
+   14. MakkiShizu/ComfyUI-Qwen2_5-VL: Qwen2.5-VL in ComfyUI - GitHub, accessed January 18, 2026, https://github.com/MakkiShizu/ComfyUI-Qwen2_5-VL
+   15. What nodes support prompting for captioning? : r/comfyui - Reddit, accessed January 18, 2026, https://www.reddit.com/r/comfyui/comments/1grropw/what_nodes_support_prompting_for_captioning/
+   16. How can i get the same result as the demo "video_understanding.ipynb" · Issue #1175 · QwenLM/Qwen3-VL - GitHub, accessed January 18, 2026, https://github.com/QwenLM/Qwen2.5-VL/issues/1175
+   17. Temporal qwen2.5vl:32b tips? : r/LocalLLaMA - Reddit, accessed January 18, 2026, https://www.reddit.com/r/LocalLLaMA/comments/1mlq8ka/temporal_qwen25vl32b_tips/
+   18. wangkanai/qwen3-vl-30b-a3b-instruct - Hugging Face, accessed January 18, 2026, https://huggingface.co/wangkanai/qwen3-vl-30b-a3b-instruct
+   19. llama.cpp - Qwen - Read the Docs, accessed January 18, 2026, https://qwen.readthedocs.io/en/latest/run_locally/llama.cpp.html
+   20. Ultimate Guide - The Top Open Source Text-to-Video Models in 2025 - SiliconFlow, accessed January 18, 2026, https://www.siliconflow.com/articles/en/best-open-source-text-to-video-models
+   21. Wan-Video/Wan2.2: Wan: Open and Advanced Large-Scale Video Generative Models - GitHub, accessed January 18, 2026, https://github.com/Wan-Video/Wan2.2
+   22. Wan-AI/Wan2.2-S2V-14B - Hugging Face, accessed January 18, 2026, https://huggingface.co/Wan-AI/Wan2.2-S2V-14B
+   23. Quick Video AI Setup for Budget 12GB Graphics Cards (WAN 2.2 GGUF Models + Lightning Training + Optimized Steps) - Latenode Official Community, accessed January 18, 2026, https://community.latenode.com/t/quick-video-ai-setup-for-budget-12gb-graphics-cards-wan-2-2-gguf-models-lightning-training-optimized-steps/33286
+   24. bullerwins/Wan2.2-T2V-A14B-GGUF - Hugging Face, accessed January 18, 2026, https://huggingface.co/bullerwins/Wan2.2-T2V-A14B-GGUF
+   25. GGUF myths : r/StableDiffusion - Reddit, accessed January 18, 2026, https://www.reddit.com/r/StableDiffusion/comments/1patosk/gguf_myths/
+   26. Wan-AI/Wan2.2-T2V-A14B - Hugging Face, accessed January 18, 2026, https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B
+   27. Wan 2.2 14B GGUF ComfyUI Free Veo Alternative. Low Vram - YouTube, accessed January 18, 2026, https://www.youtube.com/watch?v=PEkxAvUiL48
+   28. [Quick Review] World Simulation with Video Foundation Models for Physical AI - Liner, accessed January 18, 2026, https://liner.com/review/world-simulation-with-video-foundation-models-for-physical-ai
+   29. VBench Leaderboard - a Hugging Face Space by Vchitect, accessed January 18, 2026, https://huggingface.co/spaces/Vchitect/VBench_Leaderboard
+   30. nvidia/parakeet-tdt-0.6b-v3 - Hugging Face, accessed January 18, 2026, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+   31. The Top Open Source Speech-to-Text (STT) Models in 2025 - Modal, accessed January 18, 2026, https://modal.com/blog/open-source-stt
+   32. NVIDIA Speech AI Models Deliver Industry-Leading Accuracy and Performance, accessed January 18, 2026, https://developer.nvidia.com/blog/nvidia-speech-ai-models-deliver-industry-leading-accuracy-and-performance/
+   33. nvidia/parakeet-tdt-0.6b-v2 - Hugging Face, accessed January 18, 2026, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
+   34. ️ Building a Local Speech-to-Text System with Parakeet-TDT 0.6B v2 | Towards AI, accessed January 18, 2026, https://towardsai.net/p/artificial-intelligence/%EF%B8%8F-building-a-local-speech-to-text-system-with-parakeet-tdt-0-6b-v2
+   35. Voxtral - Mistral AI, accessed January 18, 2026, https://mistral.ai/news/voxtral
+   36. Voxtral - arXiv, accessed January 18, 2026, https://arxiv.org/html/2507.13264v1
+   37. How to Use SAM 2 for Video Segmentation - Roboflow Blog, accessed January 18, 2026, https://blog.roboflow.com/sam-2-video-segmentation/
+   38. I was quoted $20/month for reframing video for social media, so I built a free, open-source script for smart cropping (horizontal -> vertical) : r/VideoEditing - Reddit, accessed January 18, 2026, https://www.reddit.com/r/VideoEditing/comments/1muqntb/i_was_quoted_20month_for_reframing_video_for/
+   39. tooldigital/ComfyUI-Yolo-Cropper - GitHub, accessed January 18, 2026, https://github.com/tooldigital/ComfyUI-Yolo-Cropper
+   40. Better Motion Tracking Node · Issue #1408 · kijai/ComfyUI-WanVideoWrapper - GitHub, accessed January 18, 2026, https://github.com/kijai/ComfyUI-WanVideoWrapper/issues/1408
+   41. Auto Aspect Crop nodes for WAN 2.2 – one-click crop (16:9/9:16/1:1) and exact 720p-ready sizes : r/comfyui - Reddit, accessed January 18, 2026, https://www.reddit.com/r/comfyui/comments/1o4xcd5/auto_aspect_crop_nodes_for_wan_22_oneclick_crop/
+   42. ComfyUI-AutoCropFaces detailed guide - RunComfy, accessed January 18, 2026, https://www.runcomfy.com/comfyui-nodes/ComfyUI-AutoCropFaces
+   43. Kosinkadink/ComfyUI-VideoHelperSuite: Nodes related to video workflows - GitHub, accessed January 18, 2026, https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite
+   44. KJNodes for ComfyUI detailed guide - RunComfy, accessed January 18, 2026, https://www.runcomfy.com/comfyui-nodes/ComfyUI-KJNodes
+   45. ComfyUI: Set And Get Nodes By kijai | by YushanT7 | Medium, accessed January 18, 2026, https://medium.com/@yushantripleseven/comfyui-set-and-get-nodes-by-kijai-62a3df837e90
+   46. WAN2.2 on SaladCloud, accessed January 18, 2026, https://blog.salad.com/benchmarking-wan2-2/
+   47. Top 5 Open Source Video Generation Models - KDnuggets, accessed January 18, 2026, https://www.kdnuggets.com/top-5-open-source-video-generation-models

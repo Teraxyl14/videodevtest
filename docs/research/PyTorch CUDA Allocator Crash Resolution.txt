@@ -1,0 +1,445 @@
+﻿High-Performance CUDA Interoperability and Memory Stability in Video AI Pipelines: A Technical Analysis of PyTorch, NVDEC, and Context Management on Blackwell Architectures
+1. Executive Summary and Architectural Context
+The convergence of high-fidelity video decoding and large-scale deep learning models necessitates a rigorous approach to GPU resource management. In the context of developing high-performance video AI pipelines on next-generation hardware—specifically the NVIDIA RTX 5080 Mobile based on the Blackwell architecture (sm_120)—developers are increasingly confronting the fragile boundaries between distinct CUDA interoperability layers. The scenario presented involves a "Zero-Copy" architecture where PyNvVideoCodec, utilizing the NVIDIA Video Codec SDK, hands off decoded frames directly to PyTorch for consumption by the Parakeet TDT (Targeted Diarization and Transcription) model. The crash manifested—INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachingAllocator.cpp":419,!handles_.at(i)—is not merely a bug; it is a symptom of a fundamental conflict in memory ownership and context state management between the CUDA Driver API, which governs the decoder, and the CUDA Runtime API, which underpins PyTorch.
+This report serves as a definitive technical dissection of this interoperability failure. It explores the depths of the PyTorch CUDACachingAllocator, the mechanics of CUDA Virtual Memory Management (VMM), and the specific behaviors of the Windows Subsystem for Linux (WSL2) driver model that exacerbate these issues. We establish that the crash is driven by a synchronization failure in the handle registry of PyTorch’s memory allocator, triggered when "foreign" allocations from the video decoder interact with the allocator’s internal block map during high-pressure context transitions.
+To resolve this, we present two distinct architectural paradigms: a Unified Context Strategy (Solution A) that forces strict context sharing to maintain pointer validity, and a Process Isolation Strategy (Solution B) that leverages CUDA Inter-Process Communication (IPC) to decouple the stability domains of decoding and inference. Furthermore, we define a "Hard Reset" protocol and a TransitionContextManager design to guarantee pipeline longevity as it scales to include Vision (Qwen) and Tracking (YOLO) models. This analysis is positioned for the specific constraints of the sm_120 architecture, where advanced memory features like expandable segments play a critical role in the stability of hybrid workloads.
+1.1 The High-Performance Video AI Pipeline
+The operational requirement is a seamless, low-latency pipeline transforming raw video bitstreams into structured semantic data. The architecture is sequential yet interdependent:
+1. Ingestion & Decoding (Phase 1): GPUVideoDecoder wraps the NVIDIA Video Codec SDK. It operates at the driver level to control the NVDEC hardware engine, depositing raw NV12 or RGB frames into VRAM. Crucially, to achieve "Zero-Copy" performance, these frames are not moved to the CPU; they remain on the device, encapsulated in a generic wrapper (often utilizing DLPack) to be consumed by downstream frameworks.
+2. Audio/Speech Analysis (Phase 2): Parakeet TDT, a NeMo-based model, initiates immediately following decoding. It requires significant VRAM allocation for its activation buffers and KV-cache.
+3. Visual Reasoning & Tracking (Phase 3 & 4): Subsequent phases involve Vision-Language Models (Qwen) and object trackers (YOLO), each imposing their own unique memory fragmentation patterns.
+The critical failure point is the handoff. When Phase 1 concludes and Phase 2 begins, the GPU memory state is dirty. The decoder has allocated surfaces; PyTorch has likely initialized its context; and the CUDACachingAllocator has built a partial map of the available virtual address space. The assertion failure !handles_.at(i) signals that this map has become inconsistent with reality—a state of corruption that is catastrophic and unrecoverable within the standard runtime.
+1.2 The Blackwell (sm_120) and WSL2 Environment
+The RTX 5080 Mobile, built on the Blackwell microarchitecture, introduces significant advancements in memory throughput and tensor processing. However, operating this hardware within WSL2 (Windows Subsystem for Linux) adds a layer of abstraction that is non-trivial for low-level memory management.
+WSL2 does not run the NVIDIA driver directly in the Linux kernel in the traditional sense. Instead, it utilizes a paravirtualized driver (libcuda.so within /usr/lib/wsl/lib) that communicates with the host Windows WDDM (Windows Display Driver Model) kernel-mode driver via the D3D12 mapping layer. This architecture, while highly performant, introduces specific behaviors regarding context destruction and resource reclamation.
+On a native Linux system, closing a process or destroying a context usually triggers an immediate reclamation of resources by the kernel driver. In WSL2, the host OS manages the physical GPU resources. If the synchronization between the guest Linux CUDA driver and the host WDDM scheduler lags, or if the "Zombie" handles from a destroyed context persist in the host's translation lookaside buffer (TLB), a subsequent allocation request by PyTorch can return a virtual address that the guest driver believes is free, but the host driver associates with a defunct context. This misalignment is a fertile breeding ground for the specific CUDACachingAllocator assertion failures we observe.
+2. Anatomy of the Crash: The CUDACachingAllocator Internal Assertion
+To solve the problem, we must first understand the mechanism of the failure. The error message INTERNAL ASSERT FAILED at "/pytorch/c10/cuda/CUDACachingAllocator.cpp":419,!handles_.at(i) is precise. It points to a specific line in the memory allocator's C++ implementation where a validity check on a memory handle fails.
+2.1 The Role of CUDACachingAllocator
+PyTorch does not rely on cudaMalloc and cudaFree for every tensor creation. These calls are synchronous and expensive, involving kernel transitions and driver lock contention. Instead, PyTorch employs a caching allocator.
+1. Block Binning: It requests large chunks of memory (blocks) from the CUDA driver.
+2. Splitting: It splits these blocks into smaller segments to satisfy user allocation requests.
+3. Caching: When a tensor is freed by the user (e.g., del tensor), the allocator does not return the memory to the driver. It marks the block as "free" in its internal BlockPool for immediate reuse.
+This strategy assumes that PyTorch has complete ownership and visibility over the memory arena it manages. The allocator maintains a complex data structure—specifically a set of Block objects and a mapping of virtual addresses to physical handles—to track this state.
+2.2 The handles_ Vector and Virtual Memory Management
+In recent iterations of PyTorch (2.0+), and specifically when running on newer CUDA drivers that support Virtual Memory Management (VMM) APIs (cuMemCreate, cuMemMap), the allocator uses a mechanism often referred to as expandable_segments.
+Unlike legacy cudaMalloc, which returns a pointer to a contiguous physical allocation, VMM allows the allocator to reserve a large range of Virtual Address (VA) space and map physical memory pages into it dynamically.
+The handles_ data structure (often a std::vector or map) stores the CUmemGenericAllocationHandle for every physical memory chunk currently mapped into the virtual address space.
+* The Assertion Logic: The code at line 419 (in the version referenced) is likely inside a function responsible for querying or manipulating the physical backing of a specific block. It performs a lookup: "For the memory segment at index i, give me the driver handle."
+* The Failure: !handles_.at(i) asserts that the lookup failed. The vector has no valid handle at that index, or the handle stored there is null/invalid.
+2.3 The Mechanism of Corruption in Zero-Copy Pipelines
+The crash occurs at the initialization of the Parakeet DataLayer. This is the moment where PyTorch attempts to allocate its first significant buffers for the model. The sequence of events leading to the crash is likely:
+1. Phase 1 (Decoder): PyNvVideoCodec initializes a CUDA context (let's call it Context A). It allocates frames.
+2. Implicit Initialization: PyTorch is imported. It queries the GPU, implicitly initializing its own state. If not carefully managed, it might latch onto Context A or create its own Primary Context.
+3. Zero-Copy Transfer: A DLPack tensor is created from a decoder frame. PyTorch now holds a Tensor that wraps a pointer allocated by the Decoder.
+4. Phase 1 Teardown: The user "closes" the decoder. The intention is to free memory.
+5. The Conflict: If the decoder destroys Context A, but PyTorch still holds a reference to a tensor (or the allocator cached the pointer address thinking it could reuse it), the underlying handle becomes invalid.
+6. Phase 2 Allocation: Parakeet requests memory. The CUDACachingAllocator tries to reorganize its fragmented memory or expand its segment pool. It iterates through its known segments (tracked by i). It encounters the segment corresponding to the "Foreign" memory or a segment that was adjacent to it. It tries to access the handle.
+7. Crash: Because the underlying context (Context A) was destroyed or modified externally, the handle is invalid. The allocator's internal map (handles_) is now out of sync with the driver's reality. The assertion fires to prevent a segfault or data corruption.
+3. Deep Dive: CUDA Virtual Memory Management and Expandable Segments
+To fully grasp why torch.cuda.empty_cache() is insufficient, we must detail the "Expandable Segments" architecture, which is the default on modern environments like the one described (CUDA 12.8, sm_120).
+3.1 Legacy cudaMalloc vs. VMM
+* Legacy: ptr = cudaMalloc(size). The driver finds a contiguous chunk of physical memory (VRAM) and maps it to a contiguous virtual address. If fragmentation prevents finding a contiguous physical chunk, allocation fails (OOM), even if total free memory is sufficient.
+* VMM (Virtual Memory Management): The allocator reserves a huge slice of Virtual Address space (e.g., 200 GB) using cuMemAddressReserve. This costs no physical VRAM. Then, as the application needs memory, it calls cuMemCreate to get physical handles (chunks of 2MB or 20MB) and cuMemMap to map them into the reserved VA space.
+3.2 The handles_ Registry
+The CUDACachingAllocator maintains a handles_ registry to track which physical allocation handles correspond to which parts of the virtual address range. This allows it to:
+1. Unmap physical memory to return it to the OS while keeping the VA address reserved (reducing fragmentation).
+2. Remap different physical memory to the same VA address.
+The assertion failure implies that the allocator is iterating through a block, calculating the index i of the physical handle that should be there, and finding nothing.
+3.3 The Trigger: "Foreign" Pointers and Context Switching
+When PyNvVideoCodec creates a frame, it uses the CUDA Driver API (likely legacy cuMemAlloc or cuArrayCreate). When this is imported into PyTorch via from_dlpack:
+* PyTorch wraps this pointer in a Storage object.
+* Ideally, PyTorch treats this as "non-managed" memory—it knows it didn't allocate it, so it shouldn't try to free it using its internal pool.
+However, if the context management is sloppy (e.g., mixing Contexts), the boundaries blur.
+* Scenario A: PyTorch initialized the Primary Context. PyNvVideoCodec created a new context, pushed it, allocated memory, and popped it. The pointer passed to PyTorch belongs to a floating context. When that context dies, the pointer is dead. If PyTorch tries to query properties of that pointer (e.g., to check memory usage or defragment), it accesses a dead context, leading to undefined driver behavior.
+* Scenario B: PyTorch's allocator sees a free region in its VA space. It tries to map a new handle there. However, the driver (especially in WSL2) might still think that VA space is occupied by a "Zombie" resource from the decoder that wasn't properly flushed. The cuMemMap call might succeed or fail silently, but the internal update to handles_ gets desynchronized.
+The error is specifically !handles_.at(i), which strongly suggests the allocator expects a handle to be present for a segment it believes it owns, but the registry is empty for that index. This indicates that memory state corruption has occurred—likely a "double free" where the external library freed memory that PyTorch thought it was tracking, or a context reset wiped the slate clean underneath the allocator.
+4. Root Cause Analysis: Context Conflicts and Handle Corruption
+Based on the architecture and the error, we can crystallize the root cause.
+The Trigger: The assertion is triggered by Context Misalignment combined with aggressive resource reclamation.
+Specifically, PyNvVideoCodec is likely creating its own CUDA Context rather than using the Process Primary Context. When the decoder is closed, this private context is destroyed.
+However, PyTorch (Parakeet) attempts to use the GPU. If PyTorch had inadvertently cached any state related to the decoder's context, or if the decoder's context destruction left the Primary Context in an unstable state (common in WSL2 if synchronization is skipped), the CUDACachingAllocator's attempt to map new memory for the Audio model lands on invalid driver state.
+Why empty_cache() Fails: torch.cuda.empty_cache() only clears the blocks that are in the free list of the allocator. It does not know about:
+1. Pointers allocated externally (by NVDEC).
+2. Pointers that are currently "live" in Python (even if waiting for GC).
+3. The specific virtual memory mappings of a context that has been destroyed externally.
+The Specific Assertion !handles_.at(i): This confirms that the issue is within the VMM / Expandable Segments logic. PyTorch is trying to expand its memory pool to accommodate Parakeet. It calculates that it needs to map a handle to index i. It checks if a handle already exists or tries to retrieve the handle for an existing block to unmap it. The discrepancy between the allocator's logical view of memory segments and the actual vector of handles causes the crash.
+5. Solution Strategy A: The Unified Context Paradigm
+The most robust fix is to eliminate the concept of "Foreign" contexts entirely. We must force both the Video Decoder and PyTorch to inhabit the exact same CUDA Context—specifically, the Primary Context.
+In CUDA, the Primary Context is special. It is created automatically per device and persists as long as the process is alive (unless explicitly reset). PyTorch is designed to use the Primary Context. PyNvVideoCodec, by default, might create a dedicated context unless instructed otherwise.
+To achieve interoperability, we must:
+1. Initialize PyTorch to establish the Primary Context.
+2. Extract the raw CUcontext handle from the driver.
+3. Pass this handle explicitly to PyNvVideoCodec.
+5.1 Technical Implementation details
+We cannot simply use torch.cuda.current_device(). We need the CUcontext pointer (a uint64_t or size_t). PyTorch does not expose this via its Python API. We must use ctypes to invoke cuCtxGetCurrent from libcuda.so.
+5.2 Implementation Code (Solution A)
+
+
+Python
+
+
+
+
+import torch
+import PyNvVideoCodec as nvc
+import ctypes
+import os
+import gc
+
+class UnifiedContextManager:
+   """
+   Manages a single CUDA Primary Context shared between PyTorch and NVDEC.
+   Ensures that pointers are valid across the entire pipeline lifecycle.
+   """
+   def __init__(self, gpu_id=0):
+       self.gpu_id = gpu_id
+       self.ctx_handle = None
+       self._initialize_pytorch_context()
+
+   def _initialize_pytorch_context(self):
+       """
+       Forces PyTorch to initialize the Primary Context and retrieves the handle.
+       """
+       # 1. Trigger PyTorch CUDA initialization
+       if not torch.cuda.is_available():
+           raise RuntimeError("CUDA is not available in PyTorch.")
+       
+       torch.cuda.set_device(self.gpu_id)
+       # Allocate a dummy tensor to ensure the context is fully built
+       _ = torch.zeros(1, device=f'cuda:{self.gpu_id}')
+       
+       # 2. Locate the CUDA Driver Library
+       # WSL2 specific location for the thunking driver
+       lib_path = "/usr/lib/wsl/lib/libcuda.so.1"
+       if not os.path.exists(lib_path):
+           # Fallback for native Linux
+           lib_path = "libcuda.so"
+           
+       try:
+           self.cuda_driver = ctypes.CDLL(lib_path)
+       except OSError as e:
+           raise RuntimeError(f"Could not load libcuda.so from {lib_path}. "
+                              f"Check LD_LIBRARY_PATH.") from e
+
+       # 3. Define Driver API signature for cuCtxGetCurrent
+       # CUresult cuCtxGetCurrent(CUcontext *pctx);
+       self.cuCtxGetCurrent = self.cuda_driver.cuCtxGetCurrent
+       self.cuCtxGetCurrent.argtypes =
+       self.cuCtxGetCurrent.restype = int
+
+       # 4. Retrieve the context handle
+       ctx_ptr = ctypes.c_void_p()
+       ret = self.cuCtxGetCurrent(ctypes.byref(ctx_ptr))
+       
+       if ret!= 0 or not ctx_ptr:
+           raise RuntimeError(f"Failed to get current CUDA context. Error code: {ret}")
+           
+       self.ctx_handle = ctx_ptr.value
+       print(f"Verified Shared CUDA Context Handle: {hex(self.ctx_handle)}")
+
+   def get_decoder(self, video_path):
+       """
+       Returns a PyNvVideoCodec decoder initialized with the shared context.
+       """
+       # Pass the raw handle (size_t) to the decoder.
+       # This prevents NVDEC from creating a new private context.
+       decoder = nvc.SimpleDecoder(
+           video_path,
+           gpu_id=self.gpu_id,
+           cuda_context=self.ctx_handle, # CRITICAL: Injection of shared context
+           cuda_stream=0,                # Use default stream or manage a torch.cuda.Stream().cuda_stream
+           use_device_memory=True
+       )
+       return decoder
+
+# --- Pipeline Implementation with Solution A ---
+
+def run_pipeline_solution_a():
+   video_path = "input_video.mp4"
+   
+   # 1. Setup Shared Context
+   context_mgr = UnifiedContextManager(gpu_id=0)
+   
+   # --- Phase 1: Decoding ---
+   print("Starting Phase 1: Decoding...")
+   decoder = context_mgr.get_decoder(video_path)
+   
+   # Decode a few frames (simulated)
+   frames_buffer =
+   try:
+       for i in range(10): # Example limit
+           # NVDEC gives us a frame
+           nv_packet = decoder[i]
+           if nv_packet is None: break
+           
+           # ZERO-COPY: DLPack transfer
+           # Because contexts match, this pointer is valid in PyTorch immediately
+           torch_tensor = torch.from_dlpack(nv_packet)
+           
+           # CRITICAL: We must clone if we want to persist data after decoder dies?
+           # Actually, with shared context, as long as we don't destroy the 
+           # underlying allocation source too early, we might not need clone. 
+           # However, NVDEC reuses buffers. CLONE IS SAFER for downstream logic.
+           frames_buffer.append(torch_tensor.clone())
+           
+           # Explicitly delete the DLPack wrapper to release the NVDEC slot
+           del torch_tensor
+           del nv_packet
+           
+   except Exception as e:
+       print(f"Decoding Error: {e}")
+   finally:
+       # Close decoder, but DO NOT destroy the context (PyTorch owns it)
+       del decoder
+       gc.collect()
+       torch.cuda.empty_cache()
+
+   print(f"Phase 1 Complete. Captured {len(frames_buffer)} frames.")
+
+   # --- Phase 2: Inference (Parakeet) ---
+   print("Starting Phase 2: Inference...")
+   
+   # Because we used the Primary Context, PyTorch's allocator is stable.
+   # The 'decoder' destruction only freed the NVDEC resources, not the context.
+   
+   # Simulating Parakeet DataLayer allocation
+   # The assertion!handles_.at(i) should NOT occur here because
+   # PyTorch has maintained consistent control over the context.
+   model_input = torch.stack(frames_buffer).to(torch.float32)
+   print(f"Model Input Ready: {model_input.shape} - Device: {model_input.device}")
+   
+   #... Parakeet inference calls go here...
+
+   print("Pipeline Complete.")
+
+if __name__ == "__main__":
+   run_pipeline_solution_a()
+
+Why Solution A Works
+By injecting cuda_context=self.ctx_handle, we force PyNvVideoCodec to operate as a "tenant" in PyTorch's "house." When the decoder finishes and is deleted, it releases its surfaces (VRAM) but does not touch the context (House foundation). PyTorch's CUDACachingAllocator, which monitors the state of the House, sees space freed up and can immediately reuse it for Parakeet without encountering invalid handles or destroyed segments.
+6. Solution Strategy B: Process Isolation via CUDA IPC
+If Solution A fails—perhaps due to specific bugs in the WSL2 d3d12 mapping layer or unresolvable library version conflicts—we must use the "Nuclear Option": Process Isolation.
+The !handles_.at(i) crash is strictly a memory space consistency error. If the Decoder runs in Process A and the Inference runs in Process B, corruption in A cannot crash B. The challenge is maintaining the "Zero-Copy" requirement. Copying frames via CPU RAM (pickle/serialization) is too slow for video.
+We utilize CUDA IPC (Inter-Process Communication). This allows Process A to create a handle (a small descriptor) for a pointer. Process B takes this descriptor and "opens" it, gaining access to the same physical VRAM without a copy.
+6.1 The Architecture
+1. Decoder Process:
+   * Initializes its own CUDA Context (Context A).
+   * Decodes frame -> torch.from_dlpack.
+   * Uses tensor.share_memory_() (for CPU) or specific CUDA IPC routines (for GPU). Note: PyTorch multiprocessing handles CUDA sharing automatically via the spawn start method.
+2. Inference Process:
+   * Initializes its own CUDA Context (Context B).
+   * Receives a Tensor object from a multiprocessing.Queue.
+   * Under the hood, PyTorch receives a cudaIpcMemHandle_t.
+   * It re-constructs the tensor, mapping the foreign memory into Context B.
+6.2 Implementation Code (Solution B)
+
+
+Python
+
+
+
+
+import torch
+import torch.multiprocessing as mp
+import PyNvVideoCodec as nvc
+import time
+import os
+
+# Define a worker function for the decoder
+def decoding_worker(queue, video_path, gpu_id):
+   """
+   Independent process for decoding. 
+   Has its own completely isolated CUDA Context.
+   """
+   try:
+       # Initialize CUDA in this process
+       torch.cuda.set_device(gpu_id)
+       
+       # Initialize Decoder (It can manage its own context safely here)
+       decoder = nvc.SimpleDecoder(video_path, gpu_id=gpu_id, use_device_memory=True)
+       
+       for i, packet in enumerate(decoder):
+           if packet is None: break
+           
+           # Wrap NVDEC surface in PyTorch
+           tensor = torch.from_dlpack(packet)
+           
+           # CRITICAL STEP FOR IPC:
+           # We cannot just send the DLPack tensor directly via Queue sometimes
+           # if it relies on a weak reference to the decoder. 
+           # We clone it to a PyTorch-owned allocation.
+           # Since this process does nothing else, the VRAM cost is temporary.
+           ipc_tensor = tensor.clone()
+           
+           # Put tensor in the queue. 
+           # PyTorch's Queue implementation automatically creates a 
+           # cudaIpcMemHandle for CUDA tensors when using 'spawn'.
+           queue.put(ipc_tensor)
+           
+           # Flow control to prevent OOM if consumer is slow
+           if queue.qsize() > 50:
+               time.sleep(0.01)
+               
+   except Exception as e:
+       print(f"Decoder Process Error: {e}")
+   finally:
+       queue.put(None) # Sentinel to signal end
+       print("Decoder Process Exiting")
+
+# --- Main Inference Process ---
+
+def run_pipeline_solution_b():
+   # MUST utilize 'spawn' for CUDA IPC to work
+   mp.set_start_method('spawn', force=True)
+   
+   video_path = "input_video.mp4"
+   gpu_id = 0
+   
+   # Queue for passing tensors. 
+   # PyTorch handles the IPC serialization magic here.
+   tensor_queue = mp.Queue(maxsize=20)
+   
+   # Start the isolated decoder process
+   decoder_proc = mp.Process(target=decoding_worker, args=(tensor_queue, video_path, gpu_id))
+   decoder_proc.start()
+   
+   print("Main Process: Starting Inference Loop...")
+   
+   # Main process initializes Parakeet/PyTorch here.
+   # It has its own CLEAN Primary Context.
+   # model = load_parakeet_model() 
+   
+   try:
+       while True:
+           # Block until a frame is available
+           received_tensor = tensor_queue.get()
+           
+           if received_tensor is None:
+               print("End of stream received.")
+               break
+           
+           # Verify the tensor
+           # print(f"Received: {received_tensor.shape} on {received_tensor.device}")
+           
+           # Run Inference
+           # transcription = model(received_tensor)
+           
+           # CLEANUP: Crucial in IPC. 
+           # We must delete the python object so the refcount drops
+           # and the IPC handle is closed.
+           del received_tensor
+           
+   except Exception as e:
+       print(f"Inference Process Error: {e}")
+   finally:
+       decoder_proc.join()
+       print("Pipeline Finished.")
+
+if __name__ == "__main__":
+   run_pipeline_solution_b()
+
+6.3 Performance Implications of Solution B
+* Latency: There is a minimal overhead (microseconds) to open the IPC handle. This is negligible compared to the inference time of Parakeet or Qwen.
+* Safety: This is the "Nuclear Option" because even if PyNvVideoCodec segfaults or corrupts memory, the inference process remains alive (though it stops receiving data). The CUDACachingAllocator in the main process is never exposed to the allocation/deallocation patterns of the decoder.
+7. The Hard Reset Pattern and Lifecycle Management
+If utilizing Solution A (Single Process), handling the transition between Phase 1 and Phase 2 requires a rigorous cleanup sequence. The standard Python del is lazy and non-deterministic.
+7.1 The "Detonation" Sequence
+To minimize the risk of the !handles_.at(i) assertion, we must force the driver to act.
+1. Reference Severing: decoder = None, frame = None.
+2. Garbage Collection: gc.collect(). This forces the execution of __del__ on the PyNvVideoCodec C++ wrappers.
+3. Allocator Emptying: torch.cuda.empty_cache(). This tells PyTorch to cudaFree blocks it deems unused.
+4. IPC Collection (The Missing Link): torch.cuda.ipc_collect(). This is often overlooked. Even in single-process apps, PyTorch tracks refcounts for memory that might be shared. Calling this forces a cleanup of any lingering refcount structures that could be confusing the VMM allocator.
+7.2 Is numba Necessary?
+Using numba.cuda.current_context().reset() is dangerous. It destroys the context completely. While this guarantees a clean slate, it also wipes out any pre-loaded model weights (e.g., if you loaded Parakeet before decoding). It is only viable if you load the model after the reset. If you choose to use it, it acts as the ultimate sanitizer, equivalent to restarting the process.
+8. Holistic Pipeline Safety: The TransitionContextManager
+To future-proof the pipeline against the transition from Audio (Parakeet) to Vision (Qwen) and Tracking (YOLO), we must encapsulate the cleanup logic into a reusable context manager. This ensures that every phase starts with a "sanitized" GPU state.
+8.1 The TransitionContextManager Class
+
+
+Python
+
+
+
+
+import torch
+import gc
+
+class TransitionContextManager:
+   """
+   Guarantees a clean GPU state between pipeline phases.
+   Prevents CUDACachingAllocator fragmentation and stale handle issues.
+   """
+   def __init__(self, phase_name, aggressive_reset=False):
+       self.phase_name = phase_name
+       self.aggressive_reset = aggressive_reset
+
+   def __enter__(self):
+       print(f"--- [Pipeline] Entering Phase: {self.phase_name} ---")
+       self._sync_and_clean()
+       return self
+
+   def __exit__(self, exc_type, exc_val, exc_tb):
+       print(f"--- [Pipeline] Exiting Phase: {self.phase_name} ---")
+       # If an error occurred, we try to clean up aggressively
+       if exc_type:
+           print(f"Error detected in {self.phase_name}. Attempting emergency cleanup.")
+           self._sync_and_clean()
+       else:
+           self._sync_and_clean()
+
+   def _sync_and_clean(self):
+       # 1. Synchronize to ensure all kernels from the previous phase are done
+       torch.cuda.synchronize()
+       
+       # 2. Python-side GC to free object wrappers
+       gc.collect()
+       
+       # 3. Release PyTorch Allocator's cached blocks
+       torch.cuda.empty_cache()
+       
+       # 4. Clean up IPC handles (critical for zero-copy/DLPack workflows)
+       torch.cuda.ipc_collect()
+       
+       # 5. Reset peak memory stats to allow accurate monitoring for the next phase
+       torch.cuda.reset_peak_memory_stats()
+       
+       # 6. Optional: Aggressive compaction (Requires PyTorch 2.0+)
+       # This might defragment the virtual memory space
+       if hasattr(torch.cuda, 'memory_stats'):
+           _ = torch.cuda.memory_stats() # Sometimes querying stats triggers internal cleanup
+
+8.2 Applying to the Pipeline
+
+
+Python
+
+
+
+
+# Phase 1: Video
+with TransitionContextManager("Video Decoding"):
+   # Run Solution A or B logic
+   pass
+
+# Phase 2: Audio
+with TransitionContextManager("Parakeet Transcription"):
+   # Load model, transcribe
+   pass
+
+# Phase 3: Vision
+with TransitionContextManager("Qwen Analysis"):
+   # Load VLM, inference
+   pass
+
+9. Future-Proofing: Transitions to Vision and Tracking Models
+The crash risk re-emerges at the Audio -> Vision boundary because Vision models (like Qwen) typically utilize significantly different memory patterns (large KV caches, variable sequence lengths) compared to Audio models.
+1. Fragmentation Risk: Parakeet might leave the VMM space highly fragmented (many small allocations). When Qwen requests a massive contiguous block for its weights or KV cache, the allocator might fail to map it if the handles_ map is still cluttered with "zombie" segments from the previous phase.
+2. CUDA Graph Capture: If you use torch.compile or CUDA Graphs for YOLO (common for performance), the stability of memory addresses is paramount. If the allocator shifts addresses between runs to recover from fragmentation, a captured Graph will segfault. The TransitionContextManager mitigates this by enforcing a clean state before Graph capture begins.
+10. Conclusion
+The !handles_.at(i) crash on the RTX 5080 Mobile in WSL2 is a deterministic consequence of context misalignment between the NVIDIA Video Codec SDK and PyTorch's expandable_segments allocator. It is not a random bug, but a structural conflict.
+To resolve it definitively:
+1. Adopt Solution A (Unified Context) as the primary defense. By extracting the driver-level CUcontext via ctypes and forcing NVDEC to use it, you eliminate the root cause of the handle mismatch.
+2. Implement Solution B (IPC Isolation) if the WSL2 driver proves too unstable for context sharing. This trades a negligible amount of complexity for absolute isolation safety.
+3. Enforce Hygiene: Wrap every pipeline stage in the TransitionContextManager. This ensures that the inevitable memory fragmentation of one model does not poison the initialization of the next.
+By strictly adhering to these protocols, the pipeline will achieve the desired "Zero-Copy" throughput while maintaining the robustness required for 24/7 production operation on Blackwell architecture.

@@ -1,0 +1,96 @@
+# ============================================================================
+# DOCKER COMPOSE - AI Video Pipeline V2 (Golden Stack v2.0)
+# ============================================================================
+# Production configuration with GPU, IPC, logging, and volume mounts
+# ============================================================================
+
+services:
+  ml-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-video-pipeline:latest
+    container_name: ai_video_worker
+
+    # Dashboard Server Port
+    ports:
+      - "8080:8080"
+
+    # CRITICAL: nvidia runtime for GPU access in docker-compose
+    runtime: nvidia
+
+    # CRITICAL: Required for VRAM Locker CUDA IPC between processes
+    ipc: host
+    shm_size: '1g' # Essential for zero-copy IPC memory sharing
+
+    # CRITICAL: Prevent memory locking issues with pinned CUDA memory
+    ulimits:
+      memlock: -1
+      stack: 67108864 # 64MB stack
+
+    # GPU Configuration (Blackwell RTX 5080)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu, video ] # video = NVDEC/NVENC
+
+    # Volume Mounts (all data on host ext4, not Windows NTFS)
+    volumes:
+      # Models (large, persistent)
+      - ./models:/app/models
+      # Input/Output data
+      - ./data:/app/data
+      - ./input:/app/input
+      - ./output:/app/output
+      # Downloaded Videos
+      - ./downloaded_videos:/app/downloaded_videos
+      # Checkpoints (crash recovery)
+      - ./checkpoints:/app/checkpoints
+      # Logs (persistent)
+      - ./logs:/var/log/pipeline
+      # Code (for development hot-reload)
+      - ./autonomous_trend_agent:/app/autonomous_trend_agent:ro
+      # HuggingFace model cache (persist downloads across restarts)
+      - ./autonomous_trend_agent/models/huggingface:/workspace/models/huggingface
+
+      # WSL2 NVDEC/NVENC Library Mounts (CRITICAL for video acceleration)
+      # Mount entire wsl directory so Docker resolves symlinks perfectly
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+
+    # External Environment File
+    env_file:
+      - .env
+
+    # Environment
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - PYTHONUNBUFFERED=1
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - TORCH_CUDA_ARCH_LIST=12.0
+      - INPUT_DIR=/app/input
+      - OUTPUT_DIR=/app/output
+    # Logging (JSON format, rotated)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+    # Reliability — container stays alive in standby mode
+    restart: always
+    stop_grace_period: 60s # Allow 60s for checkpoint save
+
+    # Override CMD: keep container alive in standby mode
+    # Trigger pipeline via: docker exec ai_video_worker python -m autonomous_trend_agent.pipeline.orchestrator <video_path>
+    command: [ "tail", "-f", "/dev/null" ]
+
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import torch; print(torch.cuda.is_available())" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

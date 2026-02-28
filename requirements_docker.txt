@@ -1,0 +1,60 @@
+# AI Video Factory - Docker Container Requirements
+# These are installed INSIDE the NGC container on first run
+
+# Core dependencies (already in NGC containers but listed for reference)
+# Note: torch, torchvision, torchaudio are installed via Dockerfile (Nightly)
+
+# HuggingFace ecosystem
+huggingface_hub
+transformers>=4.50.0
+accelerate
+safetensors
+
+# Video/Image processing
+opencv-python-headless
+pillow
+numpy
+pysubs2
+filterpy
+
+# GPU-accelerated transforms (effects, reframing)
+kornia
+librosa
+skia-python
+
+# Object tracking (YOLOv11/v12)
+ultralytics>=8.4.0
+
+# Our Spokes use these
+qwen-vl-utils
+
+# NeMo is provided by the NGC container
+# nemo_toolkit[asr]  # Only needed in audio container
+
+# GUI & Monitoring
+nvidia-ml-py
+grpcio
+grpcio-tools
+protobuf
+pydantic
+
+# Dashboard Server
+fastapi
+uvicorn[standard]
+websockets
+
+# Trend Discovery
+curl_cffi
+pytrends
+playwright
+playwright-stealth
+google-genai
+python-dotenv
+
+# 4-bit quantization for Qwen3-VL
+bitsandbytes>=0.46.1
+
+# Legacy Gemini SDK (used by editor_llm.py, gemini_services.py)
+google-generativeai
+# Data pipeline (sensors/normalizer)
+redis

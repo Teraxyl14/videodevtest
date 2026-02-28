@@ -1,0 +1,135 @@
+AUTONOMOUS TREND AGENT - PROJECT SPECIFICATION
+==============================================
+
+MISSION: Build an autonomous end-to-end pipeline that discovers trending topics online, sources high-quality long-form video content, intelligently edits into 3-4 viral-ready shorts, and outputs organized ready-to-upload content with metadata.
+
+HARDWARE CONSTRAINTS
+--------------------
+- GPU: NVIDIA RTX 5080 Mobile (16GB VRAM, Blackwell sm_120)
+- CPU: Intel Core Ultra 7 255HX
+- RAM: 32GB DDR5
+- Requires: CUDA 12.8+ / PyTorch 2.7+ for native sm_120 support
+
+EXECUTION ENVIRONMENT
+---------------------
+- Primary: WSL2 (Ubuntu 24.04) + Docker
+- Container Base: nvidia/cuda:12.8.0-cudnn9-runtime-ubuntu24.04 (custom minimal)
+- Fallback: Docker Desktop on Windows with NGC containers
+- All project files mounted via volumes to M: drive
+
+VRAM RULES
+----------
+- Maximum 14GB active models at any time
+- Use quantized models (Int4/Int8) where possible
+- Sequential Hub-and-Spoke model loading (never all at once)
+- Offload to system RAM when idle
+
+EXTERNAL SERVICES
+-----------------
+- Gemini Flash API: For trend analysis, segment ranking
+- YouTube Data API v3: For trending video discovery
+- Web Scraping: Requires user approval (create research prompt, user executes)
+- Video Sources: User provides or approves before download
+
+INPUT REQUIREMENTS
+------------------
+Source Video:
+- Duration: 15-30 minutes (target 20 minutes)
+- Resolution: Minimum 1080p (1920x1080)
+- Frame Rate: Minimum 30fps
+- Format: MP4, MKV, or WebM
+- Audio: Clear speech, minimal background noise
+
+OUTPUT REQUIREMENTS
+-------------------
+Per Short:
+- Duration: 30-90 seconds
+- Aspect Ratio: 9:16 (vertical)
+- Resolution: 1080x1920
+- Captions: Burned-in, animated, word-synced (pycaps style)
+- Audio: Synced, normalized, no drift
+
+Per Batch:
+- Quantity: 3-4 shorts from one source video
+- Each short covers different compelling segment
+- No content overlap between shorts
+
+FIVE-PHASE PIPELINE
+-------------------
+Phase 1 - Trend Discovery: Identify trending topics, output trend_report.json
+  - YouTube Data API v3, Twitter/X API, Apify actors (TikTok)
+  - Validate with pytrends (Google Trends)
+Phase 2 - Video Sourcing: Find and download video matching the trend
+Phase 3 - Analysis: Transcribe, analyze visually, identify viral segments
+  - Parakeet TDT for transcription + NeMo TitaNet for diarization
+  - Qwen3-VL for visual understanding and segment scoring
+Phase 4 - Editing: Cut, reframe, add captions, apply effects
+  - YOLOv11n for subject tracking
+  - pycaps for animated captions
+  - librosa + Kornia for context-aware effects
+Phase 5 - Export: Generate metadata, organize output files
+
+DECISION AUTHORITY
+------------------
+Agent Can Do Autonomously:
+- Segment selection
+- Caption styling
+- Reframing positions
+- Effect application
+- Output file naming
+
+Requires User Approval:
+- Web searches (create prompt, user executes)
+- Video downloads from external sources
+- Major architectural changes
+- Publishing to platforms
+
+QUALITY STANDARDS
+-----------------
+- Audio sync: < 0.1 seconds drift (Perceptual Sync required, text leads audio)
+- Captions: Large, animated, word-level timing (TikTok style)
+- Tracking: Active Speaker Detection (ignore background faces)
+- Reframing: Cinematic "Rule of Thirds" + Smooth Kalman limits
+- Hook: High-retention visual/audio hook in first 3 seconds
+- Duration: STRICTLY 45-90 seconds (no exceptions)
+- Ending: Perfect loop or natural conclusion
+
+TECHNOLOGY STACK (GOLDEN STACK v1.0)
+------------------------------------
+
+AI Models (Local GPU):
+- Vision Analysis: Qwen3-VL-8B-Instruct (Int4, ~5.5GB VRAM)
+- Transcription: Parakeet TDT 0.6B v2 (~0.6GB VRAM, 3300x RTF)
+- Speaker Diarization: NeMo TitaNet (<0.5GB VRAM)
+- Object Tracking: YOLOv11n (Nano, <20MB, real-time)
+
+AI Models (Cloud):
+- Segment Ranking: Gemini Flash API
+- Title Generation: Gemini Flash API
+
+Video Processing (Zero-Copy GPU Pipeline):
+- Decode: PyNvVideoCodec (GPU-native decode)
+- Transforms: CV-CUDA / Kornia (GPU-resident processing)
+- Encode: PyNvVideoCodec + NVENC (GPU-native encode)
+
+Caption & Effects:
+- Captions: pycaps (CSS-styled animated subtitles)
+- Audio Analysis: librosa (RMS energy, prosody)
+- Visual Effects: Kornia (zoom, shake, transforms on GPU)
+
+Trend Discovery:
+- YouTube: YouTube Data API v3
+- Twitter/X: Official API or nitter scraper
+- TikTok: Apify actors
+- Validation: pytrends (Google Trends)
+
+OUTPUT STRUCTURE
+----------------
+output/shorts/{trend_name}_{date}/
+  short_01_{hook_phrase}/
+    video.mp4
+    metadata.json
+    thumbnail.jpg
+    transcript.txt
+  short_02_{hook_phrase}/
+    ...

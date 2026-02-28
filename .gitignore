@@ -1,0 +1,65 @@
+# Environment files (contain API keys)
+.env
+!.env.example
+
+# Runtime directories
+output/
+downloaded_videos/
+completed_videos/
+failed_videos/
+completed/
+failed/
+checkpoints/
+logs/
+envs/
+data/
+autonomous_trend_agent/output/
+autonomous_trend_agent/downloaded_videos/
+autonomous_trend_agent/completed/
+autonomous_trend_agent/failed/
+autonomous_trend_agent/jobs/
+autonomous_trend_agent/checkpoints/
+
+# Large media files
+*.mp4
+*.wav
+*.mkv
+*.mov
+*.avi
+
+# Models (too large for git)
+models/
+autonomous_trend_agent/models/
+*.gguf
+*.pt
+*.safetensors
+*.bin
+*.onnx
+
+# Node modules
+node_modules/
+
+# Docker
+docker/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE / OS
+.vscode/
+.idea/
+.git/
+*.swp
+*.swo
+Thumbs.db
+.DS_Store
+
+# Executables
+*.exe
+Antigravity.exe
