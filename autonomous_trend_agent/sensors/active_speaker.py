@@ -262,6 +262,7 @@ class ActiveSpeakerDetector:
         
         cmd = [
             'ffmpeg', '-y',
+            '-v', 'error',
             '-i', video_path,
             '-vn',  # No video
             '-acodec', 'pcm_s16le',

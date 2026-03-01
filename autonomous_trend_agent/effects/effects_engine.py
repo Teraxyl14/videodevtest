@@ -83,7 +83,7 @@ class AudioAnalyzer:
         if not str(audio_path).lower().endswith(('.wav', '.flac', '.ogg')):
             tmp_wav = tempfile.mktemp(suffix='.wav')
             subprocess.run(
-                ['ffmpeg', '-y', '-i', audio_path, '-vn', '-acodec', 'pcm_s16le',
+                ['ffmpeg', '-y', '-v', 'error', '-i', audio_path, '-vn', '-acodec', 'pcm_s16le',
                  '-ar', str(sr), tmp_wav],
                 capture_output=True, check=True
             )

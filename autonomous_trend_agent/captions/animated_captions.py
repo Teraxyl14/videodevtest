@@ -626,7 +626,7 @@ Style: Highlight,{s.font_name},{int(s.font_size * 1.1)},{highlight},{primary},{o
         encoder = "hevc_nvenc" if use_nvenc else "libx264"
         
         cmd = [
-            'ffmpeg', '-y',
+            'ffmpeg', '-y', '-v', 'error',
             '-i', video_path,
             '-vf', f"ass={ass_path}",
             '-c:v', encoder,
@@ -737,7 +737,7 @@ Style: Highlight,{s.font_name},{int(s.font_size * 1.1)},{highlight},{primary},{o
             video_path
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
         data = json.loads(result.stdout)
         
         stream = data.get("streams", [{}])[0]

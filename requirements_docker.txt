@@ -49,6 +49,8 @@ pytrends
 playwright
 playwright-stealth
 google-genai
+google-api-python-client  # YouTube Data API v3
+yt-dlp                    # Phase 2 video download
 python-dotenv
 
 # 4-bit quantization for Qwen3-VL
