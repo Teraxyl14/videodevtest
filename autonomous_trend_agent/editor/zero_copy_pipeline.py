@@ -21,7 +21,6 @@ import tempfile
 import shutil
 
 from .gpu_video_utils import get_video_info, clear_gpu_cache
-from .gpu_video_utils import get_video_info, clear_gpu_cache
 
 
 # -----------------------------------------------------------------------------
