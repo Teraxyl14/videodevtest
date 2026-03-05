@@ -110,7 +110,7 @@ class VideoDownloader:
             "--concurrent-fragments", "4",
 
             # Enforce max duration at download time (defends against sourcing fallback)
-            "--match-filter", "duration <= 3600",
+            "--match-filter", "duration <= 1320",  # ~22 minutes
 
             # Retry logic (H3.1)
             "--retries", "3",

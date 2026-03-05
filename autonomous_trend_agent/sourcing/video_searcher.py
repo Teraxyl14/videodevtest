@@ -81,8 +81,8 @@ class VideoSearcher:
     ]
 
     MIN_VIEWS = 10_000
-    MIN_DURATION_SEC = 900    # 15 minutes
-    MAX_DURATION_SEC = 3600   # 60 minutes
+    MIN_DURATION_SEC = 120    # 2 minutes
+    MAX_DURATION_SEC = 1320   # 22 minutes
     MAX_AGE_DAYS = 90
 
     def __init__(self, api_key: Optional[str] = None):

@@ -11,6 +11,7 @@ completed/
 failed/
 checkpoints/
 logs/
+*.log
 envs/
 data/
 autonomous_trend_agent/output/

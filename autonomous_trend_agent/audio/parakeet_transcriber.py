@@ -237,7 +237,7 @@ class ParakeetTranscriber:
             
             # Use AutoModel to control loading path and prevent CPU RAM explosion
             # low_cpu_mem_usage=True enables Meta Device init (sharded loading)
-            print(f"[DEBUG] Loading Model on device={self.device} (Zero-Copy)...")
+            logger.debug(f"Loading Whisper model on device={self.device} (Zero-Copy)")
             model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 whisper_model_id,
                 torch_dtype=torch.float16,
@@ -248,20 +248,19 @@ class ParakeetTranscriber:
                 device_map="cuda:0" if self.device == 0 else "cpu"
             )
 
-            print("[DEBUG] Loading Processor...")
+            logger.debug("Loading Whisper processor")
             processor = AutoProcessor.from_pretrained(whisper_model_id)
 
-            print("[DEBUG] Initializing Pipeline with pre-loaded model...")
+            logger.debug("Initializing HF pipeline with pre-loaded model")
             self._whisper_pipe = hf_pipeline(
                 "automatic-speech-recognition",
                 model=model,
                 tokenizer=processor.tokenizer,
                 feature_extractor=processor.feature_extractor,
-                max_new_tokens=128,
                 chunk_length_s=15,
-                batch_size=4,
+                batch_size=1,  # Down from 4 to prevent CPU RAM OOM on large files
                 torch_dtype=torch.float16,
-                device=None # Model is already on device
+                device="cuda:0" if self.device == 0 else -1
             )
             
             logger.info(f"Whisper loaded on GPU (Float16 Zero-Copy)")
@@ -299,7 +298,6 @@ class ParakeetTranscriber:
              temp_audio = Path(temp_audio_path)
              
              logger.info(f"Extracting audio from video: {input_path} -> {temp_audio}")
-             print(f"[DEBUG] Starting FFmpeg extraction: {input_path} -> {temp_audio}")
              
              # Extract 16kHz mono WAV for optimal compatibility
              cmd = [
@@ -312,9 +310,8 @@ class ParakeetTranscriber:
                  str(temp_audio)
              ]
              try:
-                 print("[DEBUG] Running FFmpeg subprocess...")
                  subprocess.run(cmd, check=True, capture_output=True)
-                 print("[DEBUG] FFmpeg extraction complete.")
+                 logger.debug("FFmpeg audio extraction complete")
                  target_path = temp_audio
              except subprocess.CalledProcessError as e:
                  logger.error(f"FFmpeg extraction failed: {e.stderr.decode()}")
@@ -325,9 +322,7 @@ class ParakeetTranscriber:
         try:
             logger.info(f"Transcribing: {target_path.name} (backend: {self._backend})")
             if self._backend == "whisper":
-                print(f"[DEBUG] Calling _transcribe_whisper for {target_path}")
                 res = self._transcribe_whisper(str(target_path), return_timestamps)
-                print(f"[DEBUG] _transcribe_whisper returned")
             else:
                 res = self._transcribe_nemo(str(target_path), return_timestamps)
             
@@ -430,13 +425,13 @@ class ParakeetTranscriber:
     def _transcribe_whisper(self, audio_path: str, return_timestamps: bool = True) -> TranscriptionResult:
         """Transcribe using Whisper via transformers pipeline."""
         try:
-            print("[DEBUG] Starting Whisper pipeline execution...")
+            logger.debug("Starting Whisper pipeline execution")
             result = self._whisper_pipe(
                 audio_path,
                 return_timestamps="word" if return_timestamps else None,
                 generate_kwargs={"language": "en", "task": "transcribe"},
             )
-            print("[DEBUG] Whisper pipeline execution finished.")
+            logger.debug("Whisper pipeline execution finished")
             
             text = result.get("text", "").strip()
             words = []
