@@ -612,38 +612,92 @@ Style: Highlight,{s.font_name},{int(s.font_size * 1.1)},{highlight},{primary},{o
         use_nvenc: bool = True
     ) -> str:
         """
-        Burn ASS captions into video using FFmpeg.
+        Burn captions into video using GPU tensor compositing.
+        
+        Uses render_to_tensor() to create RGBA overlays for each frame,
+        then alpha-composites them onto decoded frames and re-encodes with NVENC.
+        
+        This avoids FFmpeg's libass dependency which may not be compiled in.
         
         Args:
             video_path: Source video
-            ass_path: ASS subtitle file
+            ass_path: ASS subtitle file (used to read word data, or ignored if words cached)
             output_path: Output video
-            use_nvenc: Use GPU encoding
+            use_nvenc: Use GPU encoding (default True)
             
         Returns:
             Path to output video
         """
-        encoder = "hevc_nvenc" if use_nvenc else "libx264"
+        import torch
+        from autonomous_trend_agent.editor.gpu_video_utils import (
+            decode_video_batched,
+            encode_tensor_to_video,
+            get_video_info,
+            clear_gpu_cache
+        )
         
-        cmd = [
-            'ffmpeg', '-y', '-v', 'error',
-            '-i', video_path,
-            '-vf', f"ass={ass_path}",
-            '-c:v', encoder,
-            '-preset', 'fast' if use_nvenc else 'medium',
-            '-c:a', 'copy',
-            output_path
-        ]
+        print("[AnimatedCaptions] Burning captions (GPU compositing)...")
         
-        print(f"[AnimatedCaptions] Burning captions...")
+        info = get_video_info(video_path)
+        fps = info['fps']
+        width = info['width']
+        height = info['height']
         
-        try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            print(f"[AnimatedCaptions] Output: {output_path}")
+        # Get the word data from the line cache (set during generate_ass)
+        words = []
+        if self._line_cache:
+            for line in self._line_cache:
+                words.extend(line.get("words", []))
+        
+        if not words:
+            print("[AnimatedCaptions] No word data available, copying source")
+            import shutil
+            shutil.copy(video_path, output_path)
             return output_path
-        except subprocess.CalledProcessError as e:
-            print(f"[AnimatedCaptions] FFmpeg error: {e.stderr.decode()[:500]}")
-            raise
+        
+        processed_batches = []
+        frame_idx = 0
+        
+        for batch, batch_info in decode_video_batched(video_path, batch_size=30, device="cuda"):
+            # batch shape: (N, C, H, W) float32 [0..1]
+            n_frames = batch.shape[0]
+            
+            for i in range(n_frames):
+                timestamp = (frame_idx + i) / fps
+                
+                # Render caption overlay for this timestamp
+                overlay = self.render_to_tensor(words, timestamp, width, height)
+                
+                if overlay is not None:
+                    # overlay shape: (4, H, W) — RGBA float32 [0..1]
+                    alpha = overlay[3:4]  # (1, H, W)
+                    rgb_overlay = overlay[:3]  # (3, H, W)
+                    
+                    # Alpha composite: out = fg * alpha + bg * (1 - alpha)
+                    frame = batch[i]  # (C, H, W)
+                    batch[i] = rgb_overlay * alpha + frame * (1.0 - alpha)
+            
+            frame_idx += n_frames
+            processed_batches.append(batch.cpu())
+            clear_gpu_cache()
+        
+        all_frames = torch.cat(processed_batches, dim=0)
+        
+        success = encode_tensor_to_video(
+            all_frames.to("cuda"),
+            output_path,
+            fps=fps,
+            width=width,
+            height=height
+        )
+        
+        if success:
+            print("[AnimatedCaptions] Output: %s" % output_path)
+        else:
+            print("[AnimatedCaptions] Encoding failed!")
+        
+        clear_gpu_cache()
+        return output_path if success else video_path
     
     def add_captions(
         self,

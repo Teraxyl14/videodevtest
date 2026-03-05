@@ -946,13 +946,83 @@ class PipelineOrchestrator:
         for part in reframed_parts:
             part.unlink(missing_ok=True)
             
-        # Apply global effects across the final stitched short
+        # ========================================================
+        # POST-PROCESSING: Boredom Detection → Effects → Captions
+        # ========================================================
+        current_video = output_path  # Track which file is the latest version
+        
+        # Step A: Boredom Detection (E5.1)
+        boredom_plan = []
+        if self.boredom_detector is not None:
+            try:
+                self.callback.on_step(f"[Short {index}] Running Boredom Detector (TI/AE analysis)...")
+                boredom_plan = self.boredom_detector.analyze(str(current_video))
+                if boredom_plan:
+                    with open(short_dir / "boredom_plan.json", "w") as f:
+                        json.dump(boredom_plan, f, indent=2)
+                    self.callback.on_step(f"[Short {index}] Boredom: {len(boredom_plan)} low-energy zones detected")
+            except Exception as e:
+                print(f"[Short {index}] Boredom detection failed (non-fatal): {e}")
+        
+        # Step B: Apply GPU Effects (E5.2-E5.4)
         if self.effects is not None:
             try:
-                plan = self.effects.analyze_and_plan(str(output_path))
-                self.effects.audio_analyzer.save_plan(plan, str(short_dir / "effects_plan.json"))
+                self.callback.on_step(f"[Short {index}] Applying GPU effects (zoom/shake/vignette)...")
+                effects_output = short_dir / "video_effects.mp4"
+                success = self.effects.process_video(
+                    str(current_video),
+                    str(effects_output),
+                    apply_vignette=True
+                )
+                if success and effects_output.exists():
+                    # Save the effects plan for reference
+                    plan = self.effects.analyze_and_plan(str(current_video))
+                    self.effects.audio_analyzer.save_plan(plan, str(short_dir / "effects_plan.json"))
+                    # Replace current video with effects version
+                    current_video.unlink(missing_ok=True)
+                    effects_output.rename(current_video)
+                    self.callback.on_step(f"[Short {index}] Effects applied: {len(plan.triggers)} triggers")
+                else:
+                    print(f"[Short {index}] Effects encoding failed, using original")
             except Exception as e:
-                print(f"Effects failed: {e}")
+                print(f"[Short {index}] Effects failed (non-fatal): {e}")
+        
+        # Step C: Burn Animated Captions (E3.1-E3.5)
+        if self.caption_engine is not None and full_transcript.get("words"):
+            try:
+                self.callback.on_step(f"[Short {index}] Generating animated captions...")
+                # Prepare word list for ASS generation
+                caption_words = []
+                for w in full_transcript["words"]:
+                    caption_words.append({
+                        "word": w.get("word", w.get("text", "")),
+                        "start_time": w.get("start_time", w.get("start", 0.0)),
+                        "end_time": w.get("end_time", w.get("end", 0.0)),
+                    })
+                
+                if caption_words:
+                    # Generate ASS subtitle file
+                    ass_path = str(short_dir / "captions.ass")
+                    self.caption_engine.generate_ass(
+                        caption_words, ass_path,
+                        video_width=1080, video_height=1920
+                    )
+                    
+                    # Burn captions into video
+                    captioned_output = short_dir / "video_captioned.mp4"
+                    self.caption_engine.burn_captions(
+                        str(current_video),
+                        ass_path,
+                        str(captioned_output),
+                        use_nvenc=True
+                    )
+                    
+                    if captioned_output.exists():
+                        current_video.unlink(missing_ok=True)
+                        captioned_output.rename(current_video)
+                        self.callback.on_step(f"[Short {index}] Captions burned ({len(caption_words)} words)")
+            except Exception as e:
+                print(f"[Short {index}] Caption burn failed (non-fatal): {e}")
         
         # === GEMINI AI ENHANCEMENT ===
         ai_enhancement = None
