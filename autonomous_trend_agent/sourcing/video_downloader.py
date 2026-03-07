@@ -48,9 +48,9 @@ class VideoDownloader:
     """
 
     FORMAT = (
-        "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]"
-        "/bestvideo[height<=1080]+bestaudio"
-        "/best[height<=1080]"
+        "bestvideo[height<=1080][vcodec!^=av01][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=1080][vcodec!^=av01]+bestaudio"
+        "/best[height<=1080][vcodec!^=av01]"
         "/best"
     )
 
@@ -110,7 +110,7 @@ class VideoDownloader:
             "--concurrent-fragments", "4",
 
             # Enforce max duration at download time (defends against sourcing fallback)
-            "--match-filter", "duration <= 1320",  # ~22 minutes
+            "--match-filter", "duration <= 1800",  # ~30 minutes max (strict per C3.3)
 
             # Retry logic (H3.1)
             "--retries", "3",
@@ -184,12 +184,34 @@ class VideoDownloader:
 
         # Verify output file exists
         if not video_out.exists():
-            # yt-dlp sometimes adjusts the extension — scan the folder
-            mp4s = list(out_dir.glob("*.mp4"))
-            if mp4s:
-                video_out = mp4s[0]
+            # yt-dlp sometimes adjusts the extension to .mkv or .webm — scan the folder
+            other_videos = list(out_dir.glob("video.*")) + list(out_dir.glob("*.mkv")) + list(out_dir.glob("*.webm"))
+            actual_video = None
+            for p in other_videos:
+                if p.suffix.lower() in [".mkv", ".webm", ".mp4", ".mov", ".avi"]:
+                    actual_video = p
+                    break
+            
+            if actual_video:
+                if actual_video.name != "video.mp4":
+                    logger.info(f"[VideoDownloader] Remuxing {actual_video.name} to video.mp4 via FFmpeg")
+                    remux_cmd = [
+                        "ffmpeg", "-y", "-i", str(actual_video),
+                        "-c", "copy", str(video_out)
+                    ]
+                    try:
+                        subprocess.run(remux_cmd, capture_output=True, check=True)
+                        actual_video.unlink(missing_ok=True)  # Clean up the .mkv/.webm
+                    except subprocess.CalledProcessError as e:
+                        err = f"Failed to remux {actual_video.name} to mp4"
+                        logger.error(f"[VideoDownloader] {err}")
+                        return DownloadResult(
+                            success=False, video_path="", metadata_path="",
+                            title=title_hint, channel="", duration_sec=0,
+                            file_size_bytes=0, error=err,
+                        )
             else:
-                err = "Download completed but no .mp4 found in output directory"
+                err = "Download completed but no video file found in output directory"
                 logger.error(f"[VideoDownloader] {err}")
                 return DownloadResult(
                     success=False, video_path="", metadata_path="",

@@ -210,8 +210,9 @@ class Qwen3VideoAnalyzer:
                 frame_path = Path(temp_dir) / f"frame_{i:03d}.png"
                 
                 # Extract single frame at timestamp using FFmpeg
+                # Note: -ss after -i is slower but 100% accurate (avoids fast-seek failures between sparse keyframes)
                 extract_cmd = [
-                    'ffmpeg', '-y', '-ss', str(ts), '-i', video_path,
+                    'ffmpeg', '-y', '-i', video_path, '-ss', str(ts),
                     '-frames:v', '1', '-q:v', '2',
                     '-vf', f'scale={resize[0]}:{resize[1]}',
                     str(frame_path)

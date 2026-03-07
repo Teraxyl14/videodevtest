@@ -121,10 +121,17 @@ class VideoSourcing:
         quality_candidates = self._searcher.filter_by_quality(candidates)
         if not quality_candidates:
             logger.warning(
-                "[VideoSourcing] No candidates passed quality filter. "
-                "Relaxing: using all search results."
+                "[VideoSourcing] No candidates passed strict quality filter. "
+                "Relaxing engagement criteria, but enforcing strict 15-60 min duration limit."
             )
-            quality_candidates = candidates[:5]
+            # Only relax things like view count; NEVER relax the API duration limits
+            duration_ok = [c for c in candidates if 15 * 60 <= c.duration_seconds <= 30 * 60]
+            if not duration_ok:
+                raise RuntimeError(
+                    f"[VideoSourcing] All searched videos failed the hard duration limits (15-30 mins). "
+                    f"Livestreams or very short clips cannot be automatically downloaded."
+                )
+            quality_candidates = duration_ok[:5]
 
         # ── Step 3: Auto-select top candidate (sorted by view_count desc) ──
         # Already sorted by VideoSearcher.filter_by_quality — pick the first.

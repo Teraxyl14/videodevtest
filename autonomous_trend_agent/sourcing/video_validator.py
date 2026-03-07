@@ -67,8 +67,8 @@ class VideoValidator:
 
     MIN_HEIGHT = 720            # C3.1: minimum vertical resolution (relaxed from 1080)
     MIN_FPS = 24.0              # C3.2: minimum frame rate (relaxed from 30.0 to allow 29.97/24.0 formats)
-    MIN_DURATION_SEC = 120.0    # C3.3: 2 minutes
-    MAX_DURATION_SEC = 1320.0   # C3.3: 22 minutes
+    MIN_DURATION_SEC = 15 * 60.0    # C3.3: 15 minutes strict minimum
+    MAX_DURATION_SEC = 30 * 60.0    # C3.3: 30 minutes strict maximum
     MIN_AUDIO_BITRATE = 64.0    # C3.4: kbps — below this suggests noise/music only
     MIN_AUDIO_CHANNELS = 1      # C3.4: must have at least mono audio
 

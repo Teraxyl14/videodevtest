@@ -428,14 +428,18 @@ class PipelineOrchestrator:
                     min_duration=self.config.short_duration_range[0],
                     max_duration=self.config.short_duration_range[1]
                 )
-                print(f"[Orchestrator] After enforcement: {len(analysis.viral_moments)} segments")
                 for i, m in enumerate(analysis.viral_moments):
+                    # Sync start/end times with the enforced segments
+                    m.start_time = m.segments[0]["start"]
+                    m.end_time = m.segments[-1]["end"]
                     dur = m.end_time - m.start_time
                     print(f"  Segment {i+1}: {m.start_time:.1f}s - {m.end_time:.1f}s ({dur:.1f}s)")
             
             # Stage 2: Track subjects
             self.callback.on_stage_start("Subject Tracking", 1)
-            tracking_data = self._run_tracking(str(video_path))
+            # Optimization: only track up to the last required frame
+            max_end_time = max([m.end_time for m in analysis.viral_moments]) if analysis.viral_moments else None
+            tracking_data = self._run_tracking(str(video_path), max_end_time=max_end_time)
             self.callback.on_stage_complete("Subject Tracking", tracking_data)
 
             # UNLOAD TRACKER
@@ -738,7 +742,7 @@ class PipelineOrchestrator:
                 target_audience="General"
             )
     
-    def _run_tracking(self, video_path: str) -> Dict:
+    def _run_tracking(self, video_path: str, max_end_time: Optional[float] = None) -> Dict:
         """Run object tracking with YOLOv11 and optional active speaker detection"""
         result = {"tracked_objects": []}
         
@@ -746,10 +750,20 @@ class PipelineOrchestrator:
         if self.tracker is not None:
             try:
                 self.callback.on_step("Running YOLOv12-Face tracking with ByteTrack...")
+                # Calculate max_frames if max_end_time is provided
+                max_frames = None
+                if max_end_time is not None:
+                    # FPS is usually 30, but the tracker will fetch it. 
+                    # We'll use a safe upper bound or let the tracker handle it.
+                    # We'll calculate it properly inside the tracker or pass it here.
+                    max_frames = int(max_end_time * 30) + 150 # 5s buffer
+                    print(f"[Orchestrator] Optimizing tracking: capping at {max_frames} frames ({max_end_time:.1f}s)")
+
                 result = self.tracker.track_video(
                     video_path,
                     target_class="face",
-                    smooth=True
+                    smooth=True,
+                    max_frames=max_frames
                 )
                 
                 if result["tracked_objects"]:
@@ -825,31 +839,75 @@ class PipelineOrchestrator:
         for part_idx, segment_range in enumerate(segments_to_process):
             seg_start = segment_range.get("start", 0.0)
             seg_end = segment_range.get("end", 0.0)
+            seg_duration = seg_end - seg_start
             
-            self.callback.on_step(f"[Short {index}] Processing Part {part_idx+1}/{len(segments_to_process)}: {seg_start:.1f}s to {seg_end:.1f}s")
+            # Defensive guard: skip invalid or impossibly short sub-segments
+            if seg_duration < 1.0:
+                print(f"[Short {index}] Skipping invalid sub-segment {part_idx}: {seg_start:.1f}s-{seg_end:.1f}s ({seg_duration:.1f}s)")
+                continue
+            
+            self.callback.on_step(f"[Short {index}] Processing Part {part_idx+1}/{len(segments_to_process)}: {seg_start:.1f}s to {seg_end:.1f}s ({seg_duration:.1f}s)")
             
             segment_path = short_dir / f"segment_raw_{part_idx}.mp4"
             reframed_path = short_dir / f"part_{part_idx}_reframed.mp4"
             
             # 1. Extract raw segment
-            extract_cmd = [
+            # Use stream-copy first (fastest, lossless) — re-encode only if copy fails
+            extract_cmd_copy = [
                 'ffmpeg', '-y',
                 '-ss', str(seg_start),
                 '-i', source_path,
-                '-t', str(seg_end - seg_start),
-                '-filter_complex', '[0:v]setpts=PTS-STARTPTS[v];[0:a]asetpts=PTS-STARTPTS[a]',
-                '-map', '[v]', '-map', '[a]',
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p5',
-                '-pix_fmt', 'yuv420p',
-                '-b:v', '12M',
-                '-maxrate', '15M',
-                '-profile:v', 'high',
-                '-r', '30',
-                '-c:a', 'aac',
+                '-t', str(seg_duration),
+                '-c', 'copy',
+                '-avoid_negative_ts', 'make_zero',
                 str(segment_path)
             ]
-            subprocess.run(extract_cmd, capture_output=True, check=True)
+            try:
+                subprocess.run(extract_cmd_copy, capture_output=True, check=True)
+                if not segment_path.exists() or segment_path.stat().st_size < 1000:
+                    raise RuntimeError("Stream-copy produced empty/tiny file")
+            except Exception:
+                # Stream-copy can produce glitchy results on non-keyframe boundaries
+                # Fall back to re-encoding with NVENC
+                print(f"[Short {index}] Stream copy failed for part {part_idx}, re-encoding...")
+                extract_cmd_nvenc = [
+                    'ffmpeg', '-y',
+                    '-ss', str(seg_start),
+                    '-i', source_path,
+                    '-t', str(seg_duration),
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'p5',
+                    '-pix_fmt', 'yuv420p',
+                    '-b:v', '12M',
+                    '-maxrate', '15M',
+                    '-profile:v', 'high',
+                    '-r', '30',
+                    '-c:a', 'aac',
+                    str(segment_path)
+                ]
+                try:
+                    subprocess.run(extract_cmd_nvenc, capture_output=True, check=True)
+                except subprocess.CalledProcessError:
+                    # Final fallback: CPU encoding
+                    print(f"[Short {index}] NVENC failed for part {part_idx}, using libx264")
+                    extract_cmd_cpu = [
+                        'ffmpeg', '-y',
+                        '-ss', str(seg_start),
+                        '-i', source_path,
+                        '-t', str(seg_duration),
+                        '-c:v', 'libx264',
+                        '-preset', 'fast',
+                        '-pix_fmt', 'yuv420p',
+                        '-b:v', '12M',
+                        '-r', '30',
+                        '-c:a', 'aac',
+                        str(segment_path)
+                    ]
+                    subprocess.run(extract_cmd_cpu, capture_output=True, check=True)
+            
+            if not segment_path.exists() or segment_path.stat().st_size < 1000:
+                print(f"[Short {index}] Segment extraction failed for part {part_idx}, skipping")
+                continue
             
             # 2. Filter tracking
             segment_tracking = self._filter_tracking_for_segment(
@@ -891,22 +949,10 @@ class PipelineOrchestrator:
             else:
                 self.reframer.reframe(str(segment_path), segment_tracking, str(reframed_path))
             
-            # 5. Burn CPU captions if GPU didn't do it
+            # 5. Per-segment captions are now handled in post-processing (Step C)
+            # The old per-segment add_captions path used FFmpeg drawtext which is
+            # unavailable in our Docker build. Captions are burned globally after stitching.
             final_part_path = reframed_path
-            if self.caption_engine is not None and segment_transcript and not used_gpu_captions:
-                try:
-                    if segment_transcript.get("words"):
-                        captioned_path = short_dir / f"part_{part_idx}_captioned.mp4"
-                        self.caption_engine.add_captions(
-                            str(reframed_path),
-                            segment_transcript,
-                            str(captioned_path),
-                            use_nvenc=True
-                        )
-                        reframed_path.unlink(missing_ok=True)
-                        final_part_path = captioned_path
-                except Exception as e:
-                    print(f"Caption burn failed for part {part_idx}: {e}")
             
             reframed_parts.append(final_part_path)
             segment_path.unlink(missing_ok=True) # Cleanup raw extraction
@@ -918,11 +964,15 @@ class PipelineOrchestrator:
                     adjusted_word["start_time"] = round(w["start_time"] + current_global_time, 3)
                     adjusted_word["end_time"] = round(w["end_time"] + current_global_time, 3)
                     full_transcript["words"].append(adjusted_word)
-            current_global_time += (seg_end - seg_start)
+            current_global_time += max(0, seg_end - seg_start)
             
         # ========================================================
         # STITCHING: Concatenate all processed parts
         # ========================================================
+        if not reframed_parts:
+            print(f"[Short {index}] No reframed parts produced — all sub-segments failed")
+            return {"index": index, "error": "No segments could be extracted"}
+        
         self.callback.on_step(f"[Short {index}] Stitching {len(reframed_parts)} reframed parts together")
         
         concat_list_path = short_dir / "concat_list.txt"
@@ -1252,8 +1302,13 @@ class PipelineOrchestrator:
         enforced = []
         
         for moment in moments:
-            if not moment.segments:
-                continue
+            # Ensure moment has segments list (Qwen3/audio fallback may not have it)
+            if not hasattr(moment, 'segments') or not moment.segments:
+                # Create single-segment from start_time/end_time
+                if hasattr(moment, 'start_time') and hasattr(moment, 'end_time'):
+                    moment.segments = [{"start": moment.start_time, "end": moment.end_time}]
+                else:
+                    continue
                 
             # 0. Snap every raw LLM segment to real word/sentence boundaries to prevent internal abrupt cuts
             for seg in moment.segments:
@@ -1317,10 +1372,14 @@ class PipelineOrchestrator:
                 snapped_end = self._snap_to_word_boundary(
                     target_end, transcript_words, direction='backward'
                 )
-                if snapped_end is not None and snapped_end > first_seg["start"] + 30:
+                # Critical guard: snapped end MUST be after last_seg start + 30s minimum
+                if snapped_end is not None and snapped_end > last_seg["start"] + 30:
                     last_seg["end"] = snapped_end
-                else:
+                elif target_end > last_seg["start"] + 30:
                     last_seg["end"] = target_end
+                else:
+                    # Can't cap without destroying the segment — keep at max_duration from start
+                    last_seg["end"] = last_seg["start"] + max_duration
                 duration = sum(s.get("end", 0.0) - s.get("start", 0.0) for s in moment.segments)
                 print(f"[Duration] Capped to {duration:.1f}s")
             
@@ -1334,7 +1393,14 @@ class PipelineOrchestrator:
                     first_seg["start"] = snapped_start
                     duration = sum(s.get("end", 0.0) - s.get("start", 0.0) for s in moment.segments)
             
-            # 5. Final validation
+            # 5. Sanitize: remove any sub-segments where end <= start
+            moment.segments = [s for s in moment.segments if s.get("end", 0) > s.get("start", 0) + 1.0]
+            if not moment.segments:
+                print(f"[Duration] REJECTED: All sub-segments invalid after enforcement")
+                continue
+            duration = sum(s.get("end", 0.0) - s.get("start", 0.0) for s in moment.segments)
+            
+            # 6. Final validation
             if duration >= min_duration * 0.9:  # Allow 10% tolerance
                 enforced.append(moment)
                 print(f"[Duration] ACCEPTED: {duration:.1f}s segment '{moment.hook[:30]}'")

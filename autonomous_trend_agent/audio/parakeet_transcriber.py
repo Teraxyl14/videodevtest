@@ -148,10 +148,6 @@ class ParakeetTranscriber:
         
         # Try NeMo Parakeet first
         try:
-            # FORCE WHISPER FALLBACK for "Really Good Shorts"
-            # Reason: Parakeet TDT timestamps are complex to decode without custom logic.
-            # Whisper provides robust word-level timestamps out of the box.
-            raise ImportError("Forcing Whisper for reliable timestamps")
 
             # --- BEGIN MONKEY-PATCH for Datasets >= 3.0 (NeMo Fix) ---
             import sys
@@ -198,10 +194,47 @@ class ParakeetTranscriber:
             # ------------------------------------------------------------------
 
             import nemo.collections.asr as nemo_asr
+            
+            # --- BEGIN REPRODUCIBLE MONKEY-PATCH FOR NEMO TIMESTAMPS=TRUE BUG ---
+            # This fixes "NameError: name 'copy' is not defined" in RNNT decoding
+            try:
+                import copy
+                import sys
+                # Force import to ensure it's in sys.modules
+                import nemo.collections.asr.parts.submodules.rnnt_decoding as rnnt_decoding
+                # Inject copy into the module global namespace
+                setattr(rnnt_decoding, 'copy', copy)
+                if 'nemo.collections.asr.parts.submodules.rnnt_decoding' in sys.modules:
+                    setattr(sys.modules['nemo.collections.asr.parts.submodules.rnnt_decoding'], 'copy', copy)
+                logger.info("Successfully patched NeMo rnnt_decoding with missing 'copy' module")
+            except Exception as e:
+                logger.debug(f"NeMo optional patch skipped or failed: {e}")
+            # --- END MONKEY-PATCH ---
+            
             logger.info(f"Loading Parakeet TDT model: {self.model_name}")
             self._model = nemo_asr.models.ASRModel.from_pretrained(model_name=self.model_name)
             self._model = self._model.to(self.device)
             self._model.eval()
+            
+            # Apply memory optimizations for long audio (Deep Research finding)
+            try:
+                # 1. Local relative attention caps quadratic memory scaling
+                self._model.change_attention_model(
+                    self._model.cfg.encoder.get('self_attention_model', 'rel_pos_local_attn'),
+                    update_config=True
+                )
+                
+                # If that failed and we need strict rel_pos_local_attn:
+                if not hasattr(self._model.encoder, 'attention_type') or self._model.encoder.attention_type != 'rel_pos_local_attn':
+                    self._model.change_attention_model('rel_pos_local_attn', update_config=True)
+
+                # 2. Convolutional sub-sampling chunking to prevent initial layer OOM
+                if hasattr(self._model, 'change_subsampling_conv_chunking_factor'):
+                    self._model.change_subsampling_conv_chunking_factor(1)
+                logger.info("Applied TDT memory optimizations (local attention + chunking)")
+            except Exception as e:
+                logger.warning(f"Could not apply memory optimizations: {e}")
+                
             logger.info(f"Parakeet TDT loaded on {self.device}")
             self._backend = "nemo"
             if self.enable_diarization:
@@ -341,82 +374,132 @@ class ParakeetTranscriber:
                 temp_audio.unlink()
 
     def _transcribe_nemo(self, audio_path: str, return_timestamps: bool = True) -> TranscriptionResult:
-        """Transcribe using NeMo Parakeet TDT model."""
+        """Transcribe using NeMo Parakeet TDT model, with safe chunking."""
+        import tempfile
+        import subprocess
+        from pathlib import Path
+        import gc
+
         try:
-            # NeMo expects list of files
-            files = [audio_path]
+            duration = self._get_audio_duration(audio_path)
+            # 60s chunks for absolute stability and lower memory pressure
+            chunk_length_s = 60.0  
+            num_chunks = int(duration // chunk_length_s) + 1 if duration > 0 else 1
             
-            # Run inference
-            # Parakeet TDT returns [text] or [text, timestamps] depending on config?
-            # Actually ASRModel.transcribe returns list of hypothesis
+            all_words = []
+            full_text = []
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                for i in range(num_chunks):
+                    start_time = i * chunk_length_s
+                    if duration > 0 and start_time >= duration:
+                        break
+                        
+                    chunk_duration = min(chunk_length_s, duration - start_time) if duration > 0 else chunk_length_s
+                    if chunk_duration <= 0:
+                        break
+
+                    chunk_path = str(Path(temp_dir) / f"chunk_{i}.wav")
+                    logger.info(f"Processing chunk {i+1}/{num_chunks} ({start_time:.1f}s to {start_time+chunk_duration:.1f}s)...")
+                    
+                    cmd = [
+                        'ffmpeg', '-y', '-i', audio_path, 
+                        '-ss', str(start_time), '-t', str(chunk_duration),
+                        '-c', 'copy', chunk_path
+                    ]
+                    subprocess.run(cmd, capture_output=True, check=True)
+                    
+                    with torch.no_grad():
+                        # Configure stable legacy fallback
+                        from omegaconf import open_dict
+                        decoding_cfg = self._model.cfg.decoding
+                        with open_dict(decoding_cfg):
+                            decoding_cfg.preserve_alignments = True
+                            # DISABLE built-in compute_timestamps to avoid ValueError mismatch crash
+                            decoding_cfg.compute_timestamps = False
+                            decoding_cfg.word_seperator = " "
+                        
+                        self._model.change_decoding_strategy(decoding_cfg)
+                        hypotheses = self._model.transcribe([chunk_path], return_hypotheses=True)
+                        
+                        if isinstance(hypotheses, tuple) and len(hypotheses) == 2:
+                            hypotheses = hypotheses[0]
+                            
+                        hypothesis = hypotheses[0]
+                        chunk_text = hypothesis.text if hasattr(hypothesis, 'text') else ""
+                        parsed_word_timestamps = []
+                        
+                        # Calculate time stride (TDT usually 0.08s per frame)
+                        try:
+                            window_stride = self._model.cfg.preprocessor.window_stride
+                            time_stride = 8 * window_stride # TDT has 8x downsampling
+                        except:
+                            time_stride = 0.08
+                        
+                        # Manually parse timestep even if compute_timestamps is False
+                        if hasattr(hypothesis, 'timestep') and hypothesis.timestep:
+                            # TDT often provides 'word' timestamps directly in timestep
+                            if 'word' in hypothesis.timestep:
+                                raw_words = hypothesis.timestep['word']
+                                for stamp in raw_words:
+                                    word_text = stamp.get('word', '')
+                                    # Use offsets if present, else use start/end directly
+                                    start_off = stamp.get('start_offset', stamp.get('start', 0))
+                                    end_off = stamp.get('end_offset', stamp.get('end', 0))
+                                    
+                                    # Convert to absolute video time
+                                    s_time = start_off * time_stride + start_time
+                                    e_time = end_off * time_stride + start_time
+                                    
+                                    parsed_word_timestamps.append(Word(
+                                        text=word_text,
+                                        start=round(float(s_time), 3),
+                                        end=round(float(e_time), 3),
+                                        confidence=1.0
+                                    ))
+                            elif 'char' in hypothesis.timestep:
+                                # Fallback to char-level if word is missing
+                                logger.debug(f"Chunk {i}: Word timesteps missing, falling back to char-level.")
+                                pass # We'll just aggregate text later
+                        
+                        # If no timestamps were extracted but we have text, create a simple uniform distribution
+                        if not parsed_word_timestamps and chunk_text:
+                            logger.warning(f"Chunk {i}: No timestamps found in timestep. Distributing words uniformly.")
+                            words = chunk_text.split()
+                            if words:
+                                word_dur = chunk_duration / len(words)
+                                for idx, w in enumerate(words):
+                                    parsed_word_timestamps.append(Word(
+                                        text=w,
+                                        start=round(start_time + idx * word_dur, 3),
+                                        end=round(start_time + (idx + 1) * word_dur, 3),
+                                        confidence=0.5
+                                    ))
+
+                        all_words.extend(parsed_word_timestamps)
+                        full_text.append(chunk_text)
+                        
+                        # Aggressive VRAM cleanup
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+
+            # Create final result
+            combined_text = " ".join(full_text)
+            segments = self._create_segments(combined_text, all_words)
             
-            # We need to use the transcribe method with return_hypotheses=True for timestamps if TDT supports it differently
-            # TDT output is usually (best_hyp, beams)
-            
-            logger.info(f"Running NeMo inference on {audio_path}...")
-            
-            with torch.no_grad():
-                # For Parakeet TDT, .transcribe() returns list of texts
-                # To get timestamps, code is more complex. 
-                # Simplification: Use built-in transcribe, check if we can get timestamps.
-                # Usually we need 'logprobs=False'
+            if self.enable_diarization:
+                segments = self._add_speaker_labels(audio_path, segments)
                 
-                # NOTE: For TDT, timestamps are native. 
-                # Using the model's transcribe method:
-                hypotheses = self._model.transcribe(
-                    paths2audio_files=files,
-                    batch_size=1,
-                    return_hypotheses=True,
-                    num_workers=0 # robust
-                )
-                
-                if not hypotheses:
-                    raise RuntimeError("NeMo returned empty hypotheses")
-                
-                hyp = hypotheses[0]
-                text = hyp.text
-                
-                # Extract timestamps from hypothesis (if available in TDT)
-                # TDT hypothesis object might have 'timestep' or 'alignments'
-                # If not available, we use text-only or approximate.
-                
-                # Check for timestamp attributes (timestep info)
-                # TDT model output usually contains token durations.
-                
-                words = []
-                if return_timestamps and hasattr(hyp, 'timestep') and hasattr(hyp, 'alignments'):
-                    # This is complex TDT decoding. 
-                    # If unavailable, we might fail to get word timestamps effortlessly without deeper decoding.
-                    # Fallback to text-only if complex.
-                    pass
-                
-                # Ideally we want word timestamps.
-                # If TDT doesn't expose them easily via high-level API, we fallback to segment-level.
-                
-                # Mock word timestamps for now if deep extraction is hard, 
-                # OR assume 1 word per X seconds (bad).
-                
-                # Basic implementation: Just return text for now to fix the crash.
-                # Future: Implement accurate TDT timestamp alignment.
-                
-                # Create single segment
-                segment = Segment(
-                    text=text,
-                    start=0.0,
-                    end=self._get_audio_duration(audio_path),
-                    words=[] 
-                )
-                
-                # Check for diarization
-                segments = [segment]
-                if self.enable_diarization:
-                    segments = self._add_speaker_labels(audio_path, segments)
-                
-                return TranscriptionResult(
-                    text=text,
-                    segments=segments,
-                    duration=segment.end
-                )
+            return TranscriptionResult(
+                text=combined_text,
+                segments=segments,
+                duration=duration
+            )
+
+        except Exception as e:
+            logger.error(f"NeMo transcription failed: {e}", exc_info=True)
+            raise
 
         except Exception as e:
             logger.error(f"NeMo transcription failed: {e}")

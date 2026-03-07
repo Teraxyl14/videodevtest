@@ -60,6 +60,18 @@ def apply_patches():
                     huggingface_hub.logout()
                     
             huggingface_hub.HfFolder = MockHfFolder
+            
+            # Patch missing ModelFilter and other removed classes
+            if not hasattr(huggingface_hub, "ModelFilter"):
+                class MockModelFilter:
+                    def __init__(self, *args, **kwargs): pass
+                huggingface_hub.ModelFilter = MockModelFilter
+                
+            if not hasattr(huggingface_hub, "ModelSearchArguments"):
+                class MockArgs:
+                    def __init__(self, *args, **kwargs): pass
+                huggingface_hub.ModelSearchArguments = MockArgs
+                
     except ImportError:
         pass
 
@@ -68,5 +80,29 @@ def apply_patches():
         logger.debug("Setting TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1")
         os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
+    # 4. Patch `huggingface_hub.hf_hub_download` for `use_auth_token`
+    try:
+        import huggingface_hub
+        original_download = huggingface_hub.hf_hub_download
+        def patched_download(*args, **kwargs):
+            if 'use_auth_token' in kwargs:
+                token = kwargs.pop('use_auth_token')
+                if token and 'token' not in kwargs:
+                    kwargs['token'] = token
+            return original_download(*args, **kwargs)
+        huggingface_hub.hf_hub_download = patched_download
+    except ImportError:
+        pass
+
 # Apply immediately on import
 apply_patches()
+
+# 5. Patch NeMo RNNT Decoding `copy` bug
+try:
+    import nemo.collections.asr.parts.submodules.rnnt_decoding as rnnt_decoding
+    import copy
+    if not hasattr(rnnt_decoding, 'copy'):
+        logger.debug("Patching missing 'copy' module in rnnt_decoding...")
+        rnnt_decoding.copy = copy
+except (ImportError, AttributeError):
+    pass
