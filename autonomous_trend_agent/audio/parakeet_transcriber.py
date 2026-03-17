@@ -374,7 +374,16 @@ class ParakeetTranscriber:
                 temp_audio.unlink()
 
     def _transcribe_nemo(self, audio_path: str, return_timestamps: bool = True) -> TranscriptionResult:
-        """Transcribe using NeMo Parakeet TDT model, with safe chunking."""
+        """
+        Transcribe using NeMo Parakeet TDT model, with safe VRAM chunking.
+        
+        ARCHITECTURE NOTE: 
+        The raw NeMo Parakeet model memory-scales quadratically with audio length.
+        To maintain the strict 16GB VRAM constraint on the RTX 5080, this method 
+        splits the source audio into 60-second chunks using FFmpeg, processes 
+        them sequentially through the model, and mathematically stitches the 
+        timestamps back together to form one cohesive, absolute-time timeline.
+        """
         import tempfile
         import subprocess
         from pathlib import Path
@@ -429,7 +438,9 @@ class ParakeetTranscriber:
                         chunk_text = hypothesis.text if hasattr(hypothesis, 'text') else ""
                         parsed_word_timestamps = []
                         
-                        # Calculate time stride (TDT usually 0.08s per frame)
+                        # TDT Algorithm typically utilizes an 8x internal downsampling window constraint.
+                        # We must calculate this exact time_stride ratio to accurately cross-multiply 
+                        # the raw token emissions back into absolute seconds relative to the chunk.
                         try:
                             window_stride = self._model.cfg.preprocessor.window_stride
                             time_stride = 8 * window_stride # TDT has 8x downsampling
@@ -437,6 +448,9 @@ class ParakeetTranscriber:
                             time_stride = 0.08
                         
                         # Manually parse timestep even if compute_timestamps is False
+                        # NeMo 1.23 throws a ValueError if compute_timestamps=True due to a strict array 
+                        # length validation failing on edge cases. Turning it off disables the crash, 
+                        # but the raw token timestep data is still emitted in the object. We parse it here.
                         if hasattr(hypothesis, 'timestep') and hypothesis.timestep:
                             # TDT often provides 'word' timestamps directly in timestep
                             if 'word' in hypothesis.timestep:

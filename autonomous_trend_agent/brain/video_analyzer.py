@@ -24,7 +24,15 @@ load_dotenv()
 # =============================================================================
 
 class ViralMoment(BaseModel):
-    """A potential viral clip identified in the video"""
+    """
+    A potential viral clip identified in the video.
+    
+    ARCHITECTURE NOTE: 
+    This strict Pydantic model is passed directly into the Gemini `GenerateContentConfig` 
+    `response_schema`. This guarantees that the LLM returns a perfectly formatted 
+    JSON array of `segments`, avoiding the brittle string-parsing and regex failures
+    common in older prompt-engineering pipelines.
+    """
     hook: str = Field(description="One punchy sentence that grabs attention")
     reason: str = Field(description="Why this moment is viral-worthy")
     viral_score: float = Field(ge=0.0, le=1.0, description="Viral potential score (0-1)")
@@ -73,7 +81,11 @@ class GeminiVideoAnalyzer:
         num_clips: int = 4
     ) -> VideoAnalysis:
         """
-        Analyze video to find viral moments
+        Uploads the core video file to Google's File API and executes a 
+        Multimodal Prompt (Video + Transcript) to extract viral bounds.
+        
+        Returns:
+            VideoAnalysis: A Pydantic object strictly adhering to the schema.
         """
         video_path = Path(video_path)
         if not video_path.exists():
@@ -81,18 +93,18 @@ class GeminiVideoAnalyzer:
         
         print(f"[GeminiVideoAnalyzer] Uploading video: {video_path.name}")
         
-        # 1. Upload Video (Modern SDK)
-        # Note: 'file' argument is used in new SDK
-        video_file = self.client.files.upload(file=str(video_path))
+        # 1. Cloud API Routing fallback (Upload Video via Modern SDK)
+        # Create an Agentic Vision Router explicitly for complex logic requests
+        multimodal_upload = self.client.files.upload(file=str(video_path))
         
         # 2. Wait for processing
-        while video_file.state.name == "PROCESSING":
+        while multimodal_upload.state.name == "PROCESSING":
             print(".", end="", flush=True)
             time.sleep(2)
-            video_file = self.client.files.get(name=video_file.name)
+            multimodal_upload = self.client.files.get(name=multimodal_upload.name)
             
-        if video_file.state.name == "FAILED":
-            raise ValueError(f"Video processing failed: {video_file.state.name}")
+        if multimodal_upload.state.name == "FAILED":
+            raise ValueError(f"Video processing failed: {multimodal_upload.state.name}")
             
         print(f"\n[GeminiVideoAnalyzer] Video ready. analyzing...")
         
@@ -125,7 +137,7 @@ Provide structured analysis."""
             # 5. Generate Content with Video + Text
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=[video_file, prompt],
+                contents=[multimodal_upload, prompt],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=VideoAnalysis,
@@ -153,7 +165,7 @@ Provide structured analysis."""
         finally:
             # Cleanup
             try:
-                self.client.files.delete(name=video_file.name)
+                self.client.files.delete(name=multimodal_upload.name)
                 print("[GeminiVideoAnalyzer] Remote file cleaned up.")
             except:
                 pass

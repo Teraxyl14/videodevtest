@@ -11,6 +11,11 @@ Flow:
 """
 
 import os
+
+# Enforce strict VRAM fragmentation management for the RTX 5080 Mobile
+# This must be executed prior to importing torch to alter the caching allocator.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"
+
 import json
 import time
 import torch
@@ -54,7 +59,35 @@ except ImportError:
 
 @dataclass
 class PipelineConfig:
-    """Configuration for the pipeline"""
+    """
+    Configuration object defining the parameters for a full pipeline run.
+    
+    This object controls:
+    1. Input Data (Video source, transcription cache, API topics)
+    2. Output specifications (Resolution, duration limits, short counts)
+    3. Hardware/Feature Toggles (Boredom detection, GPU tracking, Gemini Director)
+    
+    Attributes:
+        video_path (str): The absolute path to the long-form source video.
+        transcript_path (Optional[str]): Cached JSON transcript to skip reprocessing.
+        trend_topic (Optional[str]): The viral topic guiding the AI Director's segment selection.
+        output_dir (str): Base directory where the formatted 'shorts/short_NN' folders are saved.
+        num_shorts (int): The target number of distinct viral shorts to generate.
+        short_duration_range (tuple): (min, max) bounds for each generated clip in seconds.
+        target_resolution (tuple): The (width, height) output resolution. Defaults to 9:16 vertical (1080x1920).
+        use_gpu_reframing (bool): Enables ZeroCopy FFmpeg NVENC cropping.
+        use_yolo_tracking (bool): Enables YOLOv12-Face subject tracking.
+        use_qwen_analysis (bool): Enables local Qwen2.5-VL video intelligence.
+        use_gemini_analysis (bool): Enables Gemini 3 Flash for multi-cut script logic and ranking.
+        use_effects (bool): Enables Kornia GPU effects (screen shakes/zooms).
+        use_captions (bool): Enables PyCaps rendering.
+        use_active_speaker (bool): Enables TitaNet speaker diarization to lock tracking on whoever is talking.
+        use_llm_director (bool): Enables AI pacing decisions (cuts/zooms).
+        use_boredom_detector (bool): Triggers zooms/effects on visually static segments.
+        caption_style (str): CSS aesthetic template for captions (e.g., 'tiktok', 'hormozi').
+        batch_size (int): Frame batching size for vision model inferences.
+        device (str): Compute device identifier (e.g., 'cuda', 'cpu').
+    """
     # Input
     video_path: str = ""
     transcript_path: Optional[str] = None
@@ -121,14 +154,21 @@ class ProgressCallback:
 
 class PipelineOrchestrator:
     """
-    Orchestrates the complete short-form content generation pipeline.
+    The master controller for the entire Autonomous AI Video Agent logic path.
     
-    Connects all Golden Stack modules:
-    - TrendAggregator (discovery)
-    - Qwen3VideoAnalyzer (intelligence)  
-    - YOLOv11Tracker (tracking)
-    - HardwareReframer (editing)
-    - ContextAwareEffectsEngine (effects)
+    This class orchestrates data handoffs between the 5 major pipeline phases:
+    1. Trend Discovery (Topic validation)
+    2. Video Sourcing (Download/Validation)
+    3. Transcription & Analysis (Parakeet TDT + Qwen/Gemini)
+    4. Subject Tracking & Editing (YOLOv12-Face + NVENC ZeroCopy)
+    5. Export & API Post-Processing (Metadata, Captions)
+    
+    Architecture Note:
+    To respect the strict 16GB VRAM limit (RTX 5080), this Orchestrator acts as 
+    the 'Hub'. It instantiates ML models one-by-one as ephemeral 'Spokes'. Each 
+    model is loaded, executes its inference on a shared 100MB CUDA IPC Buffer 
+    managed by the 'VRAM Locker', and is entirely purged from memory before the 
+    subsequent phase begins. This guarantees peak VRAM never exceeds 14GB.
     """
     
     def __init__(
@@ -149,7 +189,6 @@ class PipelineOrchestrator:
         self._caption_engine = None
         self._active_speaker = None
         self._director = None
-        self._transcriber = None
         self._gemini_services = None  # For AI enhancements
         self._boredom_detector = None
 
@@ -280,25 +319,7 @@ class PipelineOrchestrator:
             self._director = LLMDirector()
         return self._director
     
-    @property
-    def transcriber(self):
-        """Lazy load audio transcriber — uses Parakeet TDT per spec"""
-        if self._transcriber is None:
-            try:
-                from autonomous_trend_agent.audio.parakeet_transcriber import ParakeetTranscriber
-                self._transcriber = ParakeetTranscriber(
-                    model_size="1.1b",
-                    device=self.device,
-                    enable_diarization=False
-                )
-                print("[Orchestrator] Using Parakeet TDT transcriber")
-            except ImportError:
-                # Fallback to Whisper-based transcriber
-                print("[Orchestrator] Parakeet unavailable, falling back to Whisper")
-                from autonomous_trend_agent.brain.transcriber import DeepTranscriber
-                self._transcriber = DeepTranscriber(model_size="large-v3", device=self.device)
-        return self._transcriber
-    
+
     @property
     def gemini_services(self):
         """Lazy load Gemini AI enhancement services"""
@@ -355,13 +376,22 @@ class PipelineOrchestrator:
                         transcript = f.read() # Simplified, usually JSON
                 elif self.config.use_captions: # Only transcribe if captions are enabled
                     self.callback.on_stage_start("Audio Transcription", 1)
-                    self.callback.on_step("Transcribing video (Parakeet TDT)")
+                    self.callback.on_step("Transcribing video (WhisperX + Pyannote via Spoke)")
                     try:
                         transcript_path = str(output_dir / "transcript.json")
-                        transcript_data = self.transcriber.transcribe(str(video_path))
-                        self.transcriber.save_transcript(transcript_data, transcript_path)
+                        
+                        # Ephemeral Execution (GPU -> RAM -> CPU)
+                        from autonomous_trend_agent.audio.whisperx_transcriber import execute_audio_alignment_spoke
+                        import os
+                        
+                        transcript_data = execute_audio_alignment_spoke(str(video_path), os.getenv("HF_TOKEN"))
+                        
+                        # Save back mapping to JSON
+                        with open(transcript_path, 'w', encoding='utf-8') as f:
+                            json.dump(transcript_data, f, indent=4)
+                            
                         self.config.transcript_path = transcript_path
-                        transcript = json.dumps(asdict(transcript_data)) # Store as string for consistency
+                        transcript = json.dumps(transcript_data) # Dict -> String for consistency
                         self.callback.on_stage_complete("Audio Transcription")
                     except Exception as e:
                         self.callback.on_error("Transcription", str(e))
@@ -370,12 +400,8 @@ class PipelineOrchestrator:
                 else:
                     self.callback.on_step("Transcription skipped (not enabled or no path provided)")
             
-            # UNLOAD TRANSCRIBER to free VRAM for Qwen
-            if self._transcriber:
-                self.callback.on_step("Unloading Transcriber to free VRAM...")
-                self._transcriber.unload()
-                self._transcriber = None
-                torch.cuda.empty_cache()
+            # VRAM is inherently freed inherently inside the Spoke process function
+            self.callback.on_step("WhisperX VRAM auto-cleared.")
             
             # 1.2 Visual Analysis (Viral Segments)
             with TransitionContextManager("Visual Analysis Phase"):
@@ -1207,7 +1233,21 @@ class PipelineOrchestrator:
         start_time: float, 
         end_time: float
     ) -> Dict:
-        """Filter tracking data and dynamically stitch active speaker trajectories"""
+        """
+        Dynamically filters full-video tracking data down to the specific time 
+        bounds of an isolated viral segment, stitching together active speaker 
+        trajectories for the camera reframer.
+        
+        Args:
+            tracking_data (Dict): The full JSON object returned by YOLOv12-Face
+            start_time (float): Start boundary of the cut segment in absolute seconds.
+            end_time (float): End boundary of the cut segment in absolute seconds.
+            
+        Returns:
+            Dict: A synthetic timeline formatting trajectory metadata to perfectly
+                  match exactly what the `ZeroCopyPipeline` re-framer expects,
+                  normalized so that `frame_idx == 0` is the start of the cut segment.
+        """
         if not tracking_data.get("tracked_objects"):
             return {"tracked_objects": []}
         

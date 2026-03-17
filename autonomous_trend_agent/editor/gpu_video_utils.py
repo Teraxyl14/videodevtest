@@ -136,101 +136,46 @@ def decode_video_native_stream(
             yield batch[0], info
         return
         
-    try:
-        import kornia
-    except Exception:
-        pass # Only needed for GPU resize inside stream? No, used for what?
-    
     info = get_video_info(video_path)
     
-    # Initialize PyNv components
+    # Initialize PyNv components natively outputting RGB Planar directly to VRAM
     import PyNvVideoCodec as nvc
-    print(f"[GPU Utils] Opening Demuxer for: {video_path}")
-    nvDemux = nvc.CreateDemuxer(filename=video_path)
+    print(f"[GPU Utils] Initializing PyNvDecoder for: {video_path}")
     try:
-        codec = nvDemux.GetNvCodecId()
-        nvDec = nvc.CreateDecoder(gpuid=0, codec=codec)
+        decoder = nvc.PyNvDecoder(
+            video_path,
+            use_device_memory=True,
+            output_format=nvc.OutputColorType.RGBP
+        )
     except Exception as e:
         print(f"[GPU Utils] Encoder init failed ({e}), fallback to FFmpeg")
         for batch, info in decode_video_batched(video_path, batch_size=1, device=device):
-            yield batch, info
+            yield batch[0], info
         return
     
-    first_frame = True
     frames_yielded = 0
+    batch_size = 1
     
-    for packet in nvDemux:
-        # Decode returns a LIST of surfaces
-        surfaces = nvDec.Decode(packet)
-        
-        for surface in surfaces:
-            try:
-                # IMPORTANT: PyNvVideoCodec 2.1.0 nv12_to_rgb() does NOT properly support
-                # __dlpack__ encapsulation. Attempting to use it silently yields the parent
-                # surface's capsule, causing it to crash downstream on consumption.
-                # Therefore, we MUST pull the RAW NV12 surface out, clone it to retain
-                # ownership, and handle the color conversion in PyTorch natively.
+    while True:
+        try:
+            raw_frames = decoder.get_batch_frames(batch_size)
+            if not raw_frames or len(raw_frames) == 0:
+                break
                 
-                # Raw NV12 tensor is shape (H * 1.5, W) uint8
-                raw_tensor = torch.from_dlpack(surface).clone()
-                
-            except Exception as e:
-                print(f"[GPU Utils] DLPack/Conversion failed: {e}")
-                continue
+            # PyNvDecoder output is natively [C, H, W] due to RGBP mapping
+            frame_tensor = torch.from_dlpack(raw_frames[0])
+            frame_tensor = frame_tensor.float() / 255.0
             
-            # --- Native NV12 to RGB Conversion (PyTorch) ---
-            # NV12 format: 
-            # - Top H rows are Y plane: (H, W)
-            # - Bottom H/2 rows are interleaved VU plane: (H/2, W) -> (V, U, V, U...)
-            
-            h_total, w = raw_tensor.shape
-            h = int(h_total * 2 / 3)
-            
-            # Extract Y plane
-            Y = raw_tensor[:h, :].float() / 255.0  # (H, W)
-            
-            # Extract UV plane
-            UV = raw_tensor[h:, :].float() / 255.0  # (H/2, W)
-            
-            # UV is interleaved V U V U
-            # U is at even columns, V is at odd columns
-            # But in PyNvVideoCodec it usually packs them as (U, V, U, V)
-            u_plane = UV[:, 0::2]  # (H/2, W/2)
-            v_plane = UV[:, 1::2]  # (H/2, W/2)
-            
-            # Upsample U and V to full resolution (H, W)
-            u_plane = torch.nn.functional.interpolate(
-                u_plane.unsqueeze(0).unsqueeze(0), size=(h, w), mode='bilinear', align_corners=False
-            ).squeeze(0).squeeze(0)
-            
-            v_plane = torch.nn.functional.interpolate(
-                v_plane.unsqueeze(0).unsqueeze(0), size=(h, w), mode='bilinear', align_corners=False
-            ).squeeze(0).squeeze(0)
-            
-            # Standard BT.601 YUV to RGB conversion
-            # R = Y + 1.402 * (V - 0.5)
-            # G = Y - 0.344136 * (U - 0.5) - 0.714136 * (V - 0.5)
-            # B = Y + 1.772 * (U - 0.5)
-            
-            u_adj = u_plane - 0.5
-            v_adj = v_plane - 0.5
-            
-            r = Y + 1.402 * v_adj
-            g = Y - 0.344136 * u_adj - 0.714136 * v_adj
-            b = Y + 1.772 * u_adj
-            
-            # Stack and clamp to create (3, H, W) RGB tensor
-            tensor = torch.stack([r, g, b], dim=0)
-            tensor = torch.clamp(tensor, 0.0, 1.0)
-            if first_frame:
-                print(f"[GPU Utils] Native Tensor Shape (Post-Process): {tensor.shape}, Dtype: {tensor.dtype}")
-                first_frame = False
-            
-            yield tensor.to(device), info
+            yield frame_tensor.to(device), info
             
             frames_yielded += 1
             if max_frames and frames_yielded >= max_frames:
-                return
+                break
+                
+        except Exception as e:
+            print(f"[GPU Utils] Decode frame failed: {e}")
+            break
+
 
 
 def decode_video_batched(

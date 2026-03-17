@@ -690,7 +690,10 @@ class ZeroCopyPipeline:
                 '-i', str(video_path),
                 '-map', '0:v',
                 '-map', '1:a?',
-                # A/V Sync (v2: robust aresample instead of basic -async)
+                # ARCHITECTURE NOTE: A/V Sync
+                # Since the source downloaded video might have a slight container timestamp offset,
+                # slicing it exactly causes audio to drift if we don't force both streams to start 
+                # precisely at PTS 0. `make_zero` ensures perfect lock between the tracked video and audio.
                 '-avoid_negative_ts', 'make_zero',
                 '-vsync', 'cfr',
                 '-shortest',
@@ -701,14 +704,15 @@ class ZeroCopyPipeline:
             # Add encoding flags based on device
             if self.device == 'cuda':
                 encode_cmd.extend([
-                    '-c:v', 'h264_nvenc',       # h264 for universal playback
-                    '-preset', 'p5',            # Quality preset (p5 = high quality)
+                    '-c:v', 'av1_nvenc',        # Blackwell hardware AV1
+                    '-preset', 'p7',            # Highest quality
+                    '-tune', 'hq',              # High Quality tune (bypasses UHQ 10-bit bug)
                     '-rc', 'vbr',               # Variable bitrate
-                    '-b:v', '12M',              # 12Mbps for crisp 1080x1920 vertical
-                    '-maxrate', '15M',          # Peak bitrate cap
-                    '-bufsize', '24M',          # VBV buffer
-                    '-pix_fmt', 'yuv420p',      # Universal pixel format
-                    '-profile:v', 'high',       # H.264 High profile
+                    '-cq', '19',                # Constant Quality
+                    '-b:v', '0',                # Let CQ dictate bitrate
+                    '-rc-lookahead', '48',      # Deep lookahead
+                    '-bf', '3',                 # B-frames for compression
+                    '-pix_fmt', 'yuv420p',      # Standard color space
                 ])
             else:
                 encode_cmd.extend([

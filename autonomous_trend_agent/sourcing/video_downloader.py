@@ -184,7 +184,12 @@ class VideoDownloader:
 
         # Verify output file exists
         if not video_out.exists():
-            # yt-dlp sometimes adjusts the extension to .mkv or .webm — scan the folder
+            # ARCHITECTURE NOTE: yt-dlp Container Handoffs
+            # YouTube streams separate A/V tracks. Depending on the format selected 
+            # (e.g. VP9 + Opus), yt-dlp will utilize FFmpeg to merge them. This 
+            # merge frequently defaults to a .mkv or .webm container instead of .mp4 
+            # despite the `--merge-output-format mp4` flag. We must scan for these 
+            # rogue containers and forcefully remux them to mp4 for downstream Zero-Copy slicing.
             other_videos = list(out_dir.glob("video.*")) + list(out_dir.glob("*.mkv")) + list(out_dir.glob("*.webm"))
             actual_video = None
             for p in other_videos:

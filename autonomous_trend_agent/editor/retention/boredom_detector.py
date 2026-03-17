@@ -60,6 +60,13 @@ class BoredomDetector:
         )
         
         # 3. Detect Low Density Zones
+        # ARCHITECTURE NOTE: Short-Form Retention Theory
+        # TikTok/Shorts viewers swipe away if stimulation drops for > 2 seconds.
+        # This loop scans the synchronized TI/AE arrays. If BOTH visual variance
+        # AND audio energy drop below their thresholds, it declares a 'Boredom Zone'
+        # and schedules a +15% GPU Zoom Punch to artificially manipulate the frame 
+        # and forcefully reset the viewer's attention span.
+        
         interventions = []
         is_bored = False
         start_frame = 0

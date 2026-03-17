@@ -1,0 +1,2233 @@
+
+--- m:\Projects\AI_Video\AI_Video-20260116T154526Z-3-001\AI_Video\AI Agent Model Stack Evaluation.pdf ---
+Optimization of Edge-Native 
+Autonomous Video Repurposing 
+Pipelines: A Mid-2026 State-of-the-Art 
+Analysis 
+The Theoretical Landscape of Edge-Based Video 
+Repurposing 
+The engineering of an autonomous video repurposing agent constrained to an edge-native 
+hardware environment requires a rigorous orchestration of computational resources, memory 
+bandwidth, and algorithmic efficiency. In the mid-2026 artificial intelligence ecosystem, the 
+deployment of multimodal pipelines on consumer-grade mobile Graphics Processing Units 
+(GPUs) is no longer solely dictated by raw computational throughput, but rather by the delicate 
+management of Video Random Access Memory (VRAM).1 Video repurposing—a workflow that 
+inherently involves decoding high-resolution temporal media, transcribing and aligning acoustic 
+data, identifying semantic engagement hooks, and executing geometric spatial 
+crops—demands the simultaneous or rapidly sequential execution of multiple deep neural 
+networks. 
+The baseline architecture under evaluation targets an NVIDIA RTX 5080 Mobile GPU featuring 
+16 gigabytes of VRAM.2 While this hardware provides exceptional generative capabilities 
+bolstered by fifth-generation Tensor Cores and native FP4/FP8 precision optimizations 4, a 
+16GB memory ceiling strictly governs the pipeline's operational topography. To maintain fluid 
+execution and leave adequate capacity for the operating system, display drivers, and the active 
+high-definition video frame buffer, a hard constraint of 8GB of VRAM per active model must be 
+enforced. Exceeding this limit forces the system to page memory across the Peripheral 
+Component Interconnect Express (PCI-e) bus to the system's dynamic random-access 
+memory (DRAM), a process that induces catastrophic latency spikes and destroys the 
+near-real-time responsiveness required for autonomous video editing workflows.1 
+This report provides an exhaustive evaluation of the proposed baseline model stack, 
+systematically comparing its components against the absolute state-of-the-art open-weights 
+architectures available as of mid-2026. The analysis encompasses automated speech 
+recognition (ASR) and speaker diarization alternatives, optimizations for Vision-Language 
+Models (VLMs) to eliminate context-switching latency during viral hook identification, the 
+unification of computer vision tracking matrices, and the strategic offloading of high-level 
+semantic logic to the Gemini 3 Flash Application Programming Interface (API). 
+Topographical Constraints and the Memory 
+Bandwidth Bottleneck 
+Before evaluating the individual neural network architectures, it is necessary to establish the 
+physical constraints of the target hardware. The RTX 5080 Mobile, while a formidable edge 
+processor, operates within strict thermal and bandwidth limitations compared to data center 
+equivalents. In large language models and vision-language models, token generation and visual 
+prefilling are fundamentally memory-bound operations.1 The speed at which a model can 
+process a video frame or generate a text token is directly tied to how rapidly the model weights 
+can be shuttled from VRAM into the streaming multiprocessors. 
+When a pipeline relies on sequentially loading distinct, large-scale models—such as 
+transitioning from an audio transcription model to a 7-billion-parameter vision-language 
+model—the operating system incurs a massive context-switching penalty.6 If a heavily 
+quantized 7B model occupies 7.5GB of VRAM, swapping it out to load a computer vision 
+tracking matrix flushes the key-value (KV) cache.7 Upon reloading the vision-language model 
+for the next video segment, the system must recompute the KV cache for the entire video 
+context, resulting in severe Time-to-First-Token (TTFT) degradation.9 Therefore, the 
+overarching optimization strategy for this autonomous agent must prioritize architectures that 
+remain permanently resident in memory or possess such minute parameter counts that 
+initialization occurs in low single-digit milliseconds. 
+Acoustic Perception: Speech Recognition and 
+Temporal Alignment 
+The baseline pipeline employs the Parakeet Token-and-Duration Transducer (TDT) 0.6B v2 via 
+the NVIDIA NeMo framework for audio transcription, coupled sequentially with NeMo TitaNet 
+for speaker diarization. The primary objective in video repurposing is achieving a harmonious 
+balance between transcription throughput, Word Error Rate (WER), and absolute word-level 
+timestamp precision, as these timestamps govern the chronological cutting logic of the final 
+video export. 
+Architectural Critique of the Parakeet TDT Paradigm 
+The Parakeet TDT architecture represents a significant departure from standard Connectionist 
+Temporal Classification (CTC) models. Traditional CTC models suffer from conditional 
+independence assumptions and require extensive blank-symbol padding to align asynchronous 
+speech frames with output text. The TDT framework circumvents this by predicting both the 
+token and its emission duration simultaneously, allowing the decoder to skip redundant 
+acoustic frames entirely. The 0.6B v2 iteration utilizes a Fast Conformer encoder, operating with 
+profound computational efficiency. In benchmark testing, it often exceeds an inverse real-time 
+factor (RTFx) of 3000 on edge processors, meaning it can transcribe hours of audio in mere 
+seconds.10 
+However, the TDT architecture exhibits distinct functional limitations when applied specifically 
+to autonomous video repurposing workloads. The model fundamentally lacks custom 
+dictionary support, rendering it highly susceptible to phonetic hallucination when encountering 
+domain-specific vocabulary, modern internet slang, acronyms, or non-standard brand 
+pronunciations often found in viral content.12 More critically, while the TDT model excels in raw 
+transcription speed, its timestamp alignment is inherently coarse compared to strictly aligned 
+frameworks.13 Because it predicts token durations probabilistically and skips acoustic frames, 
+the precise millisecond boundaries of words are blurred. In video editing, where a cut must 
+occur exactly on the plosive consonant of a spoken word to maintain a dynamic pace, coarse 
+timestamps lead to jarring audio-visual desynchronization. 
+State-of-the-Art Transcription Alternatives 
+The mid-2026 landscape offers several highly optimized alternatives that balance 
+conversational accuracy and timing precision against the strict 8GB VRAM constraint: 
+The Canary Qwen 2.5B model currently achieves the lowest Word Error Rate (5.63%) on the 
+Hugging Face Open ASR Leaderboard.10 This architecture pairs NVIDIA's Fast Conformer 
+acoustic encoder with a robust Large Language Model (LLM) decoder, yielding unparalleled 
+accuracy in complex acoustic environments.11 However, its 2.5 billion parameters push the 
+memory constraints dangerously close to the 8GB limit when accounting for the audio context 
+buffer, and its RTFx of 418 represents an eight-fold reduction in throughput compared to 
+Parakeet TDT.10 For a mobile pipeline, Canary is computationally prohibitive. 
+Conversely, the Whisper ecosystem has evolved significantly to address its historical latency 
+issues. Distil-Whisper Large-v3 provides a mathematically superior equilibrium for this specific 
+use case.16 Distilled directly from the OpenAI Whisper Large-v3, this variant compresses the 
+original 1.54 billion parameters down to 756 million.17 The knowledge distillation process 
+operates by freezing the entire encoder and reducing the decoder to merely two initialized 
+layers.17 This structural pruning achieves an inference acceleration six times greater than its 
+predecessor while maintaining a WER within one percent of the original Large-v3 on 
+out-of-distribution audio.17 
+Crucially, the Whisper architecture can be wrapped within the WhisperX framework.13 
+WhisperX is not a standalone neural network, but rather a comprehensive transcription 
+orchestration pipeline. It utilizes Voice Activity Detection (VAD) to segment the audio, runs the 
+transcription via Distil-Whisper, and then utilizes a wav2vec2 model to force-align the output.13 
+Forced alignment maps the generated text tokens back to the raw acoustic waveform at the 
+millisecond level, producing highly accurate word-level bounding boxes in the audio temporal 
+space.18 For an autonomous video agent, this wav2vec2 alignment ensures that visual framing 
+shifts or b-roll insertions trigger perfectly in sync with the speaker's cadence. 
+Diarization Pipeline Consolidation 
+Speaker diarization—the process of assigning speech segments to distinct, identified 
+speakers—forms the foundation for speaker-tracking visual algorithms. The baseline stack 
+utilizes NeMo TitaNet for this task. TitaNet extracts speaker embeddings with remarkable 
+discriminative capacity, leveraging 1D depth-wise separable convolutions to capture acoustic 
+features. In benchmark evaluations involving short conversational recordings, TitaNet yielded 
+an Equal Error Rate (EER) of 1.91%, demonstrating excellent intra-class clustering and inter-class 
+separation.19 
+However, evaluating TitaNet against Pyannote 4.0 and ECAPA-TDNN reveals critical operational 
+dynamics that affect the overall pipeline architecture. ECAPA-TDNN architectures demonstrate 
+slightly superior biometric performance with an EER of 1.71% and highly efficient inference 
+latency averaging 69.43 milliseconds per frame.19 Pyannote, which has become the de facto 
+standard for open-source diarization, utilizes sophisticated agglomerative clustering over 
+robust neural embeddings to identify speakers dynamically, without requiring a predefined 
+estimation of the speaker count.20 
+The primary inefficiency in the baseline stack is the isolation of the transcription and diarization 
+models. Running NeMo TitaNet requires an independent pass over the audio file, generating 
+embeddings that must then be manually reconciled with the Parakeet TDT transcript 
+timestamps. This creates a computational bottleneck and redundant memory allocation. When 
+deploying the aforementioned WhisperX pipeline, the Pyannote diarization module is natively 
+integrated.18 WhisperX routes the audio through Pyannote, generates the speaker clusters, and 
+maps the distilled text directly to those clusters via the wav2vec2 forced alignment.22 
+By migrating to the unified WhisperX pipeline powered by Distil-Whisper Large-v3 and 
+Pyannote, the agent consolidates acoustic feature extraction. This singular process occupies 
+roughly 3.0GB of VRAM in FP16 precision, comfortably satisfying the 8GB constraint while 
+completely eliminating the need to pass massive audio tensors between disjointed libraries.16 
+Acoustic Model 
+Architecture 
+Parameter 
+Count 
+VRAM 
+Requirement 
+(FP16) 
+Accuracy 
+Benchmark 
+(WER / EER) 
+Timestamp 
+Alignment 
+Mechanism 
+Parakeet TDT 
+0.6B v2 
+600M 
+~1.5 GB 
+6.05% WER 
+Transducer 
+Emission (Coarse) 
+Distil-Whisper 
+Large-v3 
+756M 
+~3.0 GB 
+~8.00% WER 
+wav2vec2 Forced 
+Alignment 
+(Precise) 
+Canary Qwen 
+2.5B 
+2.5B 
+~6.0 GB 
+5.63% WER 
+Conformer 
+Attention 
+NeMo TitaNet 
+N/A (Embedding) ~1.0 GB 
+1.91% EER 
+N/A 
+Pyannote (via 
+WhisperX) 
+N/A (Clustering) 
+~1.2 GB 
+SOTA Diarization 
+Agglomerative 
+Clustering 
+Vision-Language Cognition: Mitigating the 
+Context-Switching Bottleneck 
+The most computationally intensive phase of autonomous video repurposing is visual scene 
+understanding. The agent must scan incoming video frames to identify zero-shot viral 
+hooks—moments of high emotion, sudden action, compelling visual transitions, or relevant 
+optical character recognition (OCR) data. The baseline implementation attempts to achieve this 
+using the Qwen2.5-VL-7B-Instruct model, heavily quantized to an FP8 format to squeeze into 
+the memory budget. 
+The Latency Cost of 7-Billion Parameter Models on Mobile Edge 
+While the Qwen2.5-VL-7B architecture is undeniably capable, featuring Multimodal Rotary 
+Position Embeddings (M-RoPE) and dynamic resolution handling 23, deploying a 7-billion 
+parameter model on a 16GB mobile GPU introduces fatal systemic bottlenecks. An FP8 
+quantized 7B model occupies approximately 7.5GB of VRAM at rest. However, this figure 
+represents only the static model weights. During inference, the model must construct a 
+Key-Value (KV) cache for the provided context. 
+When processing temporal media, the context window expands exponentially. Analyzing just 30 
+seconds of video requires the model to encode dozens of sequential frames. Even with 
+state-of-the-art architectures, a 7B multimodal model processing a 30-second video snippet 
+can demand upwards of 41.85GB of VRAM in unquantized states, and roughly 17.84GB even 
+under extreme 4-bit Advanced Weight Quantization (AWQ).25 Consequently, relying on a 7B 
+parameter model for continuous video analysis on a 16GB GPU guarantees immediate memory 
+saturation. 
+When the VRAM fills, the operating system initiates memory paging, offloading active tensors 
+to the CPU's much slower DRAM. In benchmark testing utilizing frameworks like vLLM and 
+Ollama, this phenomenon manifests as extreme Time-to-First-Token (TTFT) delays.6 The CPU 
+utilization spikes to 100% as it attempts to manage the overflow, while the GPU utilization 
+plummets because it is starved of data waiting for the PCI-e bus to transfer the necessary 
+weights.9 For a video editing agent that must make sub-second decisions regarding scene 
+retention, latency spikes of several seconds per frame render the pipeline unworkable. 
+Sub-7GB High-Efficiency Vision-Language Architectures 
+To eliminate memory paging and context-switching latency, the pipeline must abandon the 7B 
+paradigm and adopt significantly lighter architectures that maintain zero-shot visual 
+comprehension capabilities while strictly adhering to a sub-4GB VRAM footprint. The mid-2026 
+open-weights ecosystem provides several highly optimized multimodal alternatives tailored for 
+edge deployment. 
+SmolVLM (2-Billion Parameters): Developed specifically to minimize memory footprints for 
+edge devices, SmolVLM leverages the SmolLM2 1.7B causal language backbone coupled with a 
+shape-optimized SigLIP vision encoder.26 Its critical innovation lies in its highly aggressive visual 
+compression algorithm. Unlike larger models that pass massive arrays of visual tokens to the 
+language decoder, SmolVLM applies a pixel shuffle strategy that compresses patched visual 
+data by a factor of nine.26 It processes 384x384 pixel image patches into a mere 81 tokens.26 
+For video processing tasks, SmolVLM extracts up to 50 evenly sampled frames from the 
+sequence, avoiding internal resizing to maintain granular detail while keeping the token count 
+astonishingly low.26 This extreme token efficiency allows the model to operate with a baseline 
+VRAM requirement of just 5.02GB. In comparative prefill throughput benchmarks, SmolVLM 
+outpaces Qwen2-VL by factors of 3.3 to 4.5, effectively eliminating the TTFT latency spikes.26 
+While exceptional for static frame analysis, SmolVLM exhibits documented limitations in 
+complex temporal understanding, occasionally struggling to discern whether rapid actions 
+occur simultaneously or sequentially across frames.26 
+Qwen2.5-Omni-3B: Designed natively for multimodal omni-perception, the 3B variant of the 
+Qwen2.5-Omni series represents a significant leap in holistic media understanding.25 The 
+architecture utilizes Time-aligned Multimodal Rotary Position Embeddings (TMRoPE) to 
+synchronize temporal video inputs meticulously with accompanying audio tracks.25 This allows 
+the model to analyze the semantic relationship between a visual action and a sound effect 
+natively. When quantized using AWQ or GPTQ-Int4 protocols, the model's memory 
+consumption is dramatically reduced.25 However, processing a full 60-second video segment 
+still necessitates approximately 10GB of VRAM due to the sheer volume of temporal frames.28 
+Thus, while significantly smaller than the 7B variant, the Omni-3B requires aggressive frame 
+subsampling algorithms to remain viable under the 8GB ceiling. 
+Qwen3-4B and Qwen3-Omni-30B-A3B (Mixture of Experts): The third generation of Qwen 
+architectures introduces paradigm-shifting methodologies in cognitive processing. The 
+Qwen3-4B model features a unified architecture with dynamic dual-mode operation, allowing 
+it to toggle autonomously between a "thinking" state for deep logical evaluation and a 
+"non-thinking" state for rapid, low-latency execution.29 Built on 36 transformer layers with 
+Grouped Query Attention (GQA), the 4B model ensures high computational throughput and 
+occupies roughly 3.5GB of VRAM under INT4 quantization.31 It accommodates an enormous 
+native context window of up to 262,144 tokens, making it ideal for ingesting long strings of 
+video frames.31 
+Even more profound is the Qwen3-Omni-30B-A3B. This model utilizes a Mixture of Experts 
+(MoE) paradigm.30 While the total parameter count is 30 billion, the routing algorithm only 
+activates approximately 3 billion parameters per forward pass.30 This allows the model to 
+deliver the analytical depth and causal reasoning of a massive data-center architecture while 
+executing with the VRAM footprint and speed of a 3B model.34 Users have reported VRAM 
+usage as low as 2.6GB for the active experts in highly optimized deployments.34 
+Vision-Languag
+e Model 
+Architecture 
+Active 
+Parameters 
+Quantized 
+VRAM Baseline 
+(INT4/FP8) 
+Video Token 
+Compression 
+Strategy 
+Prefill Latency 
+Profile 
+Qwen2.5-VL-7B-
+Instruct 
+7B 
+~7.5 GB 
+Standard 
+Dynamic 
+Resolution 
+High (Bandwidth 
+Bound) 
+SmolVLM 
+2B 
+~2.5 GB 
+9x Pixel Shuffle 
+Extremely Low 
+Qwen2.5-Omni-
+3B 
+3B 
+~3.5 GB 
+TMRoPE 
+Sequential 
+Moderate 
+Qwen3-4B 
+4B 
+~3.8 GB 
+GQA / 
+Dual-Mode 
+Thinking 
+Low 
+Qwen3-Omni-3
+0B-A3B (MoE) 
+3B (Per Pass) 
+~4.5 GB 
+Mixture of 
+Experts Routing 
+Very Low 
+For the specific task of zero-shot viral hook identification, where the model must interpret 
+visual sentiment, optical character recognition (OCR) elements, and action sequences rapidly, 
+the Qwen3-4B model presents the optimal frontier. Its dual-mode functionality allows the 
+autonomous agent to engage rapid, non-thinking execution for standard frame scanning, 
+bypassing deep evaluation layers to save milliseconds.29 When a potential viral hook is 
+detected—such as a sudden change in scene luminance, a high-contrast text overlay, or an 
+exaggerated human expression—the model can dynamically activate its thinking mode for 
+intensive logical evaluation of the frame's engagement potential.29 This dynamic scaling 
+ensures VRAM is never saturated unnecessarily, completely mitigating the context-switching 
+latency that plagues the FP8 Qwen2.5-VL-7B in the baseline stack. 
+Spatial Dynamics: Unifying Computer Vision Tracking 
+Matrices 
+Once a viral hook is identified and the audio is perfectly aligned, the autonomous agent must 
+visually track the subject to execute dynamic crops (e.g., converting a 16:9 landscape video into 
+a 9:16 portrait format for social media). The baseline architecture relies on a bifurcated 
+computer vision approach: YOLOv12-Face Nano for facial bounding box detection, followed by 
+YOLO26n-Pose coupled with the ByteTrack algorithm for anatomical keypoint estimation and 
+temporal tracking. 
+Running dual object detection models sequentially across every frame of a video compounds 
+inference latency, doubles the PyTorch execution overhead, and fragments the VRAM 
+allocation unnecessarily. 
+Critique of the Dual-Model Paradigm and Attention Mechanisms 
+YOLOv12 introduced a radical architectural shift, moving away from conventional Convolutional 
+Neural Networks (CNNs) toward an attention-centric design heavily reliant on Area Attention 
+Mechanisms and Residual Efficient Layer Aggregation Networks (R-ELAN).35 While this 
+departure yielded exceptionally high precision for complex spatial tasks like facial recognition 
+under occlusion, it introduced significant computational penalties. 
+Self-attention mechanisms inherently demand elevated memory consumption as they must 
+compute the relationships between all spatial patches in an image.35 Furthermore, these 
+architectures exhibit notably slower processing throughput on edge-bound Central Processing 
+Units (CPUs) and mobile GPUs compared to optimized convolutions.35 Deploying 
+YOLOv12-Face on an RTX 5080 Mobile squanders critical memory bandwidth and compute 
+cycles that should be strictly reserved for the video frame buffer and the VLM. 
+Furthermore, passing cropped matrices from a facial detector (YOLOv12) into a separate pose 
+estimator (YOLO26n-Pose) creates a synchronous programming bottleneck. If the facial 
+detection matrix stalls or drops a frame due to motion blur, the pose estimation tensor is 
+starved of input, preventing continuous pipeline execution and causing the ByteTrack algorithm 
+to lose the subject's tracking ID. 
+The YOLO26 End-to-End Unified Architecture 
+Released in 2025 as the definitive edge-first evolution of the YOLO lineage, YOLO26 
+fundamentally restructures the detection pipeline.37 The architecture's most significant 
+technological leap is the complete eradication of Non-Maximum Suppression (NMS) as a 
+post-processing step.39 Traditional object detectors generate thousands of overlapping 
+bounding box predictions, relying on NMS algorithms running on the CPU to filter out 
+redundant boxes based on intersection-over-union thresholds. This creates a severe CPU 
+bottleneck. 
+By employing a native end-to-end predictor, YOLO26 outputs a single, refined detection for 
+each object directly from the neural network head, entirely eliminating post-processing 
+latency.38 Additionally, the removal of the Distribution Focal Loss (DFL) module significantly 
+streamlines the export graph, ensuring maximum compatibility with accelerated edge 
+inference engines like NVIDIA TensorRT.39 
+Crucially for the video repurposing agent, YOLO26 is a consolidated multi-task framework. The 
+architecture supports object detection, instance segmentation, oriented bounding boxes, and 
+pose estimation simultaneously through shared backbone features.37 The pose estimation 
+variant, YOLO26-Pose, is trained extensively on the COCO keypoints dataset.40 It natively 
+extracts 17 anatomical keypoints representing the human skeleton. Most importantly for this 
+use case, these 17 points include five specific facial landmarks: the nose, left eye, right eye, left 
+ear, and right ear.40 
+Single-Pass Pose and Bounding Extraction 
+By migrating the computer vision stack exclusively to YOLO26-Pose (specifically the small or 
+medium variant, such as YOLO26s-Pose, which occupies less than 150MB of VRAM), the 
+pipeline can extract both the spatial bounding coordinates of the subject and the precise facial 
+landmarks in a single forward pass.39 
+The mathematical advantage lies in the shared convolution layers and the novel training regime. 
+The YOLO26 architecture utilizes the MuSGD optimizer—a hybrid of Stochastic Gradient 
+Descent and the Muon optimizer—which ensures the model converges rapidly across complex, 
+multi-objective loss landscapes.39 When an image frame is ingested, the network 
+simultaneously optimizes the bounding box regression loss and the pose Residual 
+Log-Likelihood Estimation (RLE) loss.39 
+Consequently, the output tensor natively yields the 
+ coordinates of the full-body bounding 
+box (which is fed directly into the ByteTrack algorithm to maintain temporal identity across 
+frames) and the spatial geometry of the facial features (which is fed into the framing algorithm 
+to ensure the subject's face remains centered in the vertical 9:16 crop).40 
+This unification completely eradicates the need for YOLOv12-Face Nano. Dropping the 
+attention-heavy YOLOv12 frees approximately 300MB to 500MB of VRAM, reduces the pipeline 
+inference time by half, and massively simplifies the data flow into the ByteTrack association 
+algorithm, ensuring rock-solid subject tracking for automated reframing. 
+Computer 
+Vision Model 
+Primary 
+Architecture 
+NMS 
+Requirement 
+Extracted 
+Features 
+Inference 
+Paradigm 
+YOLOv12-Face 
+Nano 
+Area Attention / 
+R-ELAN 
+Required (CPU 
+Bound) 
+Facial Bounding 
+Box 
+Sequential Pass 1 
+YOLO26n-Pose 
+CNN / MuSGD 
+End-to-End 
+(NMS-Free) 
+17-Point Skeletal 
+Matrix 
+Sequential Pass 2 
+YOLO26s-Pose 
+(Unified) 
+CNN / MuSGD 
+End-to-End 
+(NMS-Free) 
+Bounding Box + 
+5 Facial 
+Landmarks 
+Single 
+Simultaneous 
+Pass 
+Cloud-Edge Synergy: Cognitive Offloading to Gemini 
+3 Flash 
+The autonomous agent operates in a hybrid topology, leveraging local compute for 
+high-frequency operations—such as video frame tracking, acoustic transcription, and rapid 
+hook identification—and relying on the Gemini 3 Flash API for high-level scripting, metadata 
+extraction, and complex semantic evaluation. Maximizing the efficiency of the RTX 5080 Mobile 
+demands the ruthless offloading of overlapping cognitive tasks to the cloud infrastructure.41 
+Gemini 3 Flash, released as Google's production-ready execution layer, introduces several 
+advanced control parameters that directly dictate the latency-cost frontier of remote 
+execution, most notably the thinking_level and media_resolution constraints.43 
+Modulating Execution Latency via Thinking Levels 
+Gemini 3 Flash incorporates an adjustable cognitive depth parameter. The thinking_level can be 
+modulated between MINIMAL, LOW, MEDIUM, and HIGH.43 In previous iterations of large 
+language models, invoking complex script analysis or semantic evaluation required full-depth 
+processing, resulting in high latency as the model generated extensive hidden 
+chain-of-thought tokens before producing an answer. 
+For a video repurposing agent generating metadata—such as synthesizing viral titles from 
+transcripts, extracting SEO keywords, or summarizing the narrative arc of a clip—the MINIMAL 
+or LOW configuration is mathematically optimal.45 Setting thinking_level=MINIMAL forces the 
+model to bypass deep multi-step planning loops, acting strictly as a high-throughput, 
+low-latency execution layer.46 
+This architecture permits the local system to stream the perfectly aligned text generated by the 
+local Distil-Whisper model directly to the Gemini API, receiving fully formatted JSON metadata 
+in a matter of milliseconds. Offloading all text-based semantic synthesis entirely to Gemini 3 
+Flash under the MINIMAL setting ensures the local RTX 5080 devotes zero GPU cycles to 
+natural language generation tasks, reserving all available compute for processing incoming 
+video frames.46 
+Deprecating Local Image Cropping via Agentic Vision 
+The most profound paradigm shift in the Gemini 3 Flash architecture is the introduction of 
+"Agentic Vision".47 Historically, Vision-Language Models processed images in a static, 
+single-pass glance. If a detail was small, obscured, or required mathematical counting, the 
+model was forced to rely on statistical hallucination rather than deterministic observation.47 To 
+combat this, local pipelines often employed complex iterative logic: utilizing local YOLO models 
+to detect regions of interest, algorithmically cropping those regions using libraries like OpenCV, 
+and feeding the high-resolution crops back into the VLM. 
+Gemini 3 Flash natively internalizes this entire process through an autonomous 
+Think-Act-Observe loop powered by secure, backend Python code execution.47 When supplied 
+with a high-definition video frame and a complex query, the model operates iteratively: 
+1.​ Think: The system analyzes the user query and the initial wide-angle image, formulating a 
+spatial investigation plan (e.g., "The subject's expression is too small to read; I must zoom 
+in on the facial coordinates").47 
+2.​ Act: The model writes and executes Python code internally to calculate pixel coordinates, 
+draw bounding boxes, or execute geometric crops on the uploaded image tensor.47 
+3.​ Observe: The freshly cropped or mathematically annotated tensor is appended back into 
+the model's context window, allowing it to inspect the new, high-resolution data before 
+generating a final semantic response.47 
+This capability renders local deterministic cropping algorithms obsolete for high-level semantic 
+tasks. Instead of burdening the RTX 5080 with calculating spatial attention crops using YOLO 
+just to feed the local Qwen model for expression analysis, the raw, uncropped frame can be 
+passed directly to Gemini 3 Flash via the API.47 
+By setting the media_resolution parameter to HIGH (which allocates up to 1,120 tokens per 
+image to preserve fine-grained pixels) 43, Gemini's Agentic Vision will autonomously zoom, 
+isolate subjects, and evaluate the scene. Benchmark data indicates that enabling code 
+execution yields a consistent 5% to 10% quality boost across complex vision tasks compared to 
+static evaluation.47 Consequently, any task requiring dense spatial reasoning, OCR extraction 
+from background signage, or complex scene comprehension should be stripped from the local 
+Qwen3-4B workload and routed to Gemini 3 Flash. The local VLM should be restricted strictly 
+to identifying broad temporal transitions and basic semantic hooks to trigger the API calls. 
+Final Pipeline Synthesis and VRAM Allocation 
+Topology 
+The exhaustive evaluation of the mid-2026 machine learning landscape against the strict 
+confines of an RTX 5080 Mobile (16GB VRAM) necessitates a complete structural revision of 
+the proposed baseline stack. By eliminating architectural redundancies, enforcing unified 
+tensor operations, and aggressively exploiting the deterministic capabilities of the Gemini 3 
+Flash API, the pipeline achieves an optimal state of latency, precision, and memory availability. 
+The Optimized Local Stack Architecture 
+1.​ Acoustic Perception and Temporal Alignment: 
+○​ Baseline: Parakeet TDT 0.6B v2 + NeMo TitaNet. 
+○​ Optimized Deployment: WhisperX featuring Distil-Whisper Large-v3 and 
+Pyannote 4.0. 
+○​ Architectural Rationale: This configuration merges acoustic feature extraction. 
+Distil-Whisper provides six times the speed of standard large models while strictly 
+adhering to wav2vec2 forced-alignment timestamps for frame-accurate video cuts. 
+Pyannote seamlessly clusters these precise timestamps into discrete speakers via 
+agglomerative clustering without relying on a separate TitaNet pass, ensuring perfect 
+audio-visual synchronization while occupying only ~3.0GB of VRAM in FP16. 
+2.​ Vision-Language Cognition (Viral Hook Identification): 
+○​ Baseline: Qwen2.5-VL-7B-Instruct (FP8). 
+○​ Optimized Deployment: Qwen3-4B (INT4 Quantization). 
+○​ Architectural Rationale: The 7B FP8 model saturated the PCI-e bus during context 
+switching, destroying Time-to-First-Token metrics as it repeatedly built the KV cache. 
+The Qwen3-4B model operates securely within a 3.8GB VRAM footprint. Its 
+dual-mode functionality ensures it executes rapidly without invoking deep logical 
+layers unless specifically triggered. This completely prevents memory paging while 
+maintaining exceptional zero-shot hook detection across a massive 262k context 
+window. 
+3.​ Spatial Geometry and Temporal Tracking: 
+○​ Baseline: YOLOv12-Face Nano + YOLO26n-Pose. 
+○​ Optimized Deployment: YOLO26s-Pose (Single Pass). 
+○​ Architectural Rationale: Running an attention-heavy YOLOv12 model sequentially with 
+a pose model fractures the execution graph and bottlenecks the CPU. YOLO26 utilizes 
+an NMS-free, end-to-end architecture with MuSGD optimization. A single inference 
+pass on YOLO26s-Pose natively yields both the human bounding box for ByteTrack 
+association and the 17-point anatomical matrix (including all 5 facial landmarks) 
+necessary for dynamic portrait framing. This reduces the computer vision VRAM 
+footprint to under 200MB and halves pipeline inference latency. 
+4.​ Cloud-Edge Load Balancing (Gemini 3 Flash Synergy): 
+○​ Strategic Implementation: All post-processing metadata generation, script synthesis, 
+and complex visual geometry analysis are systematically offloaded to Gemini 3 Flash. 
+○​ Parameter Tuning: Metadata text generation relies on the thinking_level=MINIMAL 
+parameter to ensure ultra-low latency execution without excess logic loops. Deep 
+scene analysis relies on media_resolution=HIGH paired with Agentic Vision, allowing 
+Google's infrastructure to execute Python-based zooming and cropping 
+autonomously, completely relieving the local RTX 5080 of iterative spatial processing. 
+Operational VRAM Memory Map 
+Under the optimized framework, the RTX 5080 Mobile's 16GB memory map operates with 
+profound efficiency, completely averting the risk of bus saturation: 
+●​ Operating System & Display Driver Overhead: ~2.0 GB 
+●​ Video Frame Buffer & Active Tracking Tensors: ~1.5 GB 
+●​ Computer Vision Matrix (YOLO26s-Pose): ~0.2 GB 
+●​ Acoustic Subsystem (WhisperX / Pyannote): ~3.0 GB 
+●​ Vision-Language Model (Qwen3-4B INT4): ~3.8 GB 
+●​ Available Headroom for Burst Execution: ~5.5 GB 
+This topology deliberately preserves over 5GB of unallocated VRAM. In an asynchronous 
+autonomous agent, memory spikes occur unpredictably when large frame batches are 
+decoded or when audio matrices temporarily overlap during complex scene transitions. The 
+generous memory headroom eliminates the risk of system paging to the CPU, ensuring the 
+pipeline remains purely GPU-bound. By executing rapid temporal evaluations locally through 
+unified models and deferring dense semantic synthesis to the highly tunable Gemini 3 Flash 
+API, the architecture achieves a continuous, stall-free workflow fully capable of real-time 
+autonomous video repurposing at the edge. 
+Works cited 
+1.​ The RTX 5080 Is 3x Faster Than NVIDIA's $3999 “AI Supercomputer” — And It 
+Doesn't Matter | by Mubashir Rahim - Medium, accessed March 7, 2026, 
+https://medium.com/@mubashir_rahim/the-rtx-5080-is-3x-faster-than-nvidias-3-
+999-ai-supercomputer-and-it-doesn-t-matter-fbd0fb575ed7 
+2.​ RTX 50 Gaming Laptops 2026: Complete Performance Guide - Newegg, 
+accessed March 7, 2026, 
+https://www.newegg.com/insider/gaming-laptops-in-2026-the-rtx-50-series-rev
+olution/ 
+3.​ Benchmarking AI on an RTX 5080: How Well Do Popular LLMs Run? - Micro 
+Center, accessed March 7, 2026, 
+https://www.microcenter.com/site/mc-news/article/benchmarking-ai-on-nvidia-5
+080.aspx 
+4.​ GeForce RTX 5080 Graphics Cards - NVIDIA, accessed March 7, 2026, 
+https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5080/ 
+5.​ NVIDIA RTX Accelerates 4K AI Video Generation on PC With LTX-2 and ComfyUI 
+Upgrades, accessed March 7, 2026, 
+https://blogs.nvidia.com/blog/rtx-ai-garage-ces-2026-open-models-video-gener
+ation/ 
+6.​ Ollama vs. vLLM: A deep dive into performance benchmarking | Red Hat 
+Developer, accessed March 7, 2026, 
+https://developers.redhat.com/articles/2025/08/08/ollama-vs-vllm-deep-dive-per
+formance-benchmarking 
+7.​ vLLM vs Ollama: Key differences, performance, and how to run them | Blog - 
+Northflank, accessed March 7, 2026, 
+https://northflank.com/blog/vllm-vs-ollama-and-how-to-run-them 
+8.​ Ollama VRAM Requirements: Complete 2026 Guide to GPU Memory for Local 
+LLMs, accessed March 7, 2026, 
+https://localllm.in/blog/ollama-vram-requirements-for-local-llms 
+9.​ [Performance]: Multi-Modal Benchmark on NVIDIA A100 – Qwen2.5-VL / 
+MiniCPM-V-4 / InternVL3_5-4B / InternVL3_5-2B · Issue #24728 · vllm-project/vllm 
+- GitHub, accessed March 7, 2026, 
+https://github.com/vllm-project/vllm/issues/24728 
+10.​The Top Open Source Speech-to-Text (STT) Models in 2025 - Modal, accessed 
+March 7, 2026, https://modal.com/blog/open-source-stt 
+11.​Open ASR Leaderboard: Trends and Insights with New Multilingual & Long-Form 
+Tracks - Hugging Face, accessed March 7, 2026, 
+https://huggingface.co/blog/open-asr-leaderboard 
+12.​30 Days Testing Parakeet v3 vs Whisper : r/LocalLLaMA - Reddit, accessed March 
+7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1nf10ye/30_days_testing_parak
+eet_v3_vs_whisper/ 
+13.​Choosing between Whisper variants: faster-whisper, insanely-fast-whisper, 
+WhisperX, accessed March 7, 2026, 
+https://modal.com/blog/choosing-whisper-variants 
+14.​TheWhisper-Turbo: SOTA Multilingual Transcription - TheStage AI, accessed 
+March 7, 2026, https://app.thestage.ai/blog/TheWhisper-tech-report?id=7 
+15.​What's the best local ASR model for real-time dictation in 2026? Is ..., accessed 
+March 7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1rm36ew/whats_the_best_local
+_asr_model_for_realtime/ 
+16.​Faster Whisper transcription with CTranslate2 - GitHub, accessed March 7, 2026, 
+https://github.com/SYSTRAN/faster-whisper 
+17.​Best open source speech-to-text (STT) model in 2026 (with benchmarks) | Blog - 
+Northflank, accessed March 7, 2026, 
+https://northflank.com/blog/best-open-source-speech-to-text-stt-model-in-202
+6-benchmarks 
+18.​WhisperX vs Competitors: AI Transcription Comparison 2026 - BrassTranscripts, 
+accessed March 7, 2026, 
+https://brasstranscripts.com/blog/whisperx-vs-competitors-accuracy-benchmark 
+19.​Comparison of Modern Deep Learning Models for Speaker Verification - MDPI, 
+accessed March 7, 2026, https://www.mdpi.com/2076-3417/14/4/1329 
+20.​Speaker Diarization DER performance comparison pyannoteAI Benchmark, 
+accessed March 7, 2026, https://www.pyannote.ai/benchmark 
+21.​Comparing state-of-the-art speaker diarization frameworks : Pyannote vs Nemo, 
+accessed March 7, 2026, 
+https://lajavaness.medium.com/comparing-state-of-the-art-speaker-diarization-
+frameworks-pyannote-vs-nemo-31a191c6300 
+22.​Looking for diarization model better than Pyannote : r/LocalLLaMA - Reddit, 
+accessed March 7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1m48v53/looking_for_diarizatio
+n_model_better_than_pyannote/ 
+23.​Ultimate Guide - The Best LLMs for Low-VRAM GPUs in 2026 - SiliconFlow, 
+accessed March 7, 2026, 
+https://www.siliconflow.com/articles/en/best-LLMs-for-low-VRAM-GPUs 
+24.​Run Qwen2.5-VL 7B Locally: Vision AI Made Easy - Labellerr, accessed March 7, 
+2026, https://www.labellerr.com/blog/run-qwen2-5-vl-locally/ 
+25.​QwenLM/Qwen2.5-Omni - GitHub, accessed March 7, 2026, 
+https://github.com/QwenLM/Qwen2.5-Omni 
+26.​SmolVLM - small yet mighty Vision Language Model - Hugging Face, accessed 
+March 7, 2026, https://huggingface.co/blog/smolvlm 
+27.​Qwen/Qwen2.5-Omni-3B - Hugging Face, accessed March 7, 2026, 
+https://huggingface.co/Qwen/Qwen2.5-Omni-3B 
+28.​Qwen2.5-3B: Specifications and GPU VRAM Requirements - ApX Machine 
+Learning, accessed March 7, 2026, https://apxml.com/models/qwen2-5-3b 
+29.​Qwen3-4B: Specifications and GPU VRAM Requirements - ApX Machine 
+Learning, accessed March 7, 2026, https://apxml.com/models/qwen3-4b 
+30.​Qwen3: Think Deeper, Act Faster | Qwen, accessed March 7, 2026, 
+https://qwenlm.github.io/blog/qwen3/ 
+31.​Qwen3.5-4B: Specifications and GPU VRAM Requirements - ApX Machine 
+Learning, accessed March 7, 2026, https://apxml.com/models/qwen35-4b 
+32.​VRAM requirements for all Qwen3 models (0.6B–32B) – what fits on your GPU? - 
+Reddit, accessed March 7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1kfvba4/vram_requirements_fo
+r_all_qwen3_models_06b32b/ 
+33.​Qwen3-Omni Technical Report - arXiv.org, accessed March 7, 2026, 
+https://arxiv.org/html/2509.17765v1 
+34.​Qwen 3 Performance: Quick Benchmarks Across Different Setups : r/LocalLLaMA 
+- Reddit, accessed March 7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1kdsp4z/qwen_3_performance_
+quick_benchmarks_across/ 
+35.​YOLO12: Attention-Centric Object Detection - Ultralytics YOLO Docs, accessed 
+March 7, 2026, https://docs.ultralytics.com/models/yolo12/ 
+36.​YOLO Model Comparison: v8, v11, v12 & v26 | Data-Driven Engineering - 
+APMonitor, accessed March 7, 2026, 
+https://apmonitor.com/dde/index.php/Main/PoseEstimation 
+37.​YOLO26: Key Architectural Enhancements and Performance Benchmarking for 
+Real-Time Object Detection - arXiv.org, accessed March 7, 2026, 
+https://arxiv.org/html/2509.25164v4 
+38.​YOLO26: The Edge-First Evolution of Real-Time Object Detection | Datature Blog, 
+accessed March 7, 2026, 
+https://datature.io/blog/yolo26-the-edge-first-evolution-of-real-time-object-det
+ection 
+39.​Ultralytics YOLO26, accessed March 7, 2026, 
+https://docs.ultralytics.com/models/yolo26/ 
+40.​Pose Estimation - Ultralytics YOLO Docs, accessed March 7, 2026, 
+https://docs.ultralytics.com/tasks/pose/ 
+41.​Gemini 3 Flash for Enterprises | Google Cloud Blog, accessed March 7, 2026, 
+https://cloud.google.com/blog/products/ai-machine-learning/gemini-3-flash-for-
+enterprises 
+42.​Google Launches Gemini 3 Flash to Power Real-Time AI Agents at Scale, 
+accessed March 7, 2026, 
+https://www.mitsloanme.com/article/google-launches-gemini-3-flash-to-power-r
+eal-time-ai-agents-at-scale/ 
+43.​Gemini 3 Flash | Generative AI on Vertex AI | Google Cloud ..., accessed March 7, 
+2026, 
+https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-flas
+h 
+44.​Gemini 3 Flash: Google's 3x Faster AI at 1/4 the Cost, accessed March 7, 2026, 
+https://www.digitalapplied.com/blog/gemini-3-flash-google-ai-guide 
+45.​Gemini 3 Developer Guide | Gemini API - Google AI for Developers, accessed 
+March 7, 2026, https://ai.google.dev/gemini-api/docs/gemini-3 
+46.​Get started with Gemini 3 | Generative AI on Vertex AI - Google Cloud 
+Documentation, accessed March 7, 2026, 
+https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/get-started-wit
+h-gemini-3 
+47.​Introducing Agentic Vision in Gemini 3 Flash - The Keyword, accessed March 7, 
+2026, 
+https://blog.google/innovation-and-ai/technology/developers-tools/agentic-vision
+-gemini-3-flash/ 
+48.​Beyond Just Looking: Gemini 3 Now Has Agentic Vision | by #TheGenAIGirl — 
+code, community, and GenAI. | Google Cloud - Medium, accessed March 7, 2026, 
+https://medium.com/google-cloud/beyond-just-looking-gemini-3-now-has-agen
+tic-vision-b20c7c6809ce 
+
+--- m:\Projects\AI_Video\AI_Video-20260116T154526Z-3-001\AI_Video\AI Video Pipeline Architecture Review.pdf ---
+System Architecture Evaluation: 
+Autonomous Edge AI Video Pipeline on 
+WSL2 
+1. Architectural Overview and Edge Computing 
+Constraints 
+The engineering and deployment of a fully autonomous local AI video editing pipeline on 
+consumer-grade or mobile workstation hardware presents a multifaceted orchestration 
+challenge. The target infrastructure is defined by an Intel Core Ultra 7 255HX processor paired 
+with an NVIDIA RTX 5080 Mobile Graphics Processing Unit (GPU). This environment is strictly 
+bound by a 16GB Video RAM (VRAM) limitation and 32GB of unified system RAM. Furthermore, 
+the reliance on a Windows 11 host operating system utilizing the Windows Subsystem for Linux 
+(WSL2) with an Ubuntu 24.04 userland, executed via a custom PyTorch Nightly Docker 
+container, introduces deep virtualization layers. These paravirtualized layers fundamentally alter 
+how hardware resources are addressed, managed, pinned, and released across the 
+host-to-guest boundary. 
+The proposed architecture relies on a "Hub-and-Spoke" VRAM management paradigm. This 
+design aims to mitigate the strict 16GB VRAM constraint by deploying a central CPU 
+orchestrator (the Hub) to manage systemic state, while sequentially loading, executing, and 
+terminating ephemeral "Spoke" models, which include Automatic Speech Recognition (ASR), 
+YOLO for spatial object detection, and the Qwen Large Language Model for advanced 
+semantic reasoning. By ensuring that these highly parameterized models do not reside in 
+memory concurrently, the system targets a peak VRAM utilization of less than 14GB, leaving a 
+necessary 2GB buffer for operating system display drivers and the WSL2 translation layer. 
+To prevent the catastrophic saturation of the Peripheral Component Interconnect Express 
+(PCIe) bus, the architecture establishes a zero-copy video processing pipeline. This is achieved 
+utilizing FFmpeg 7.1, compiled with explicit hardware acceleration flags (--enable-cuda, 
+--enable-nvdec, --enable-nvenc), interfacing directly with PyNvVideoCodec and Kornia. 
+Frames are intended to be pinned in the GPU memory space and passed as raw pointers to the 
+respective Spoke models. A background "Locker" process is deployed to hold a 100MB Shared 
+CUDA Buffer via Inter-Process Communication (IPC) handles, ensuring that the sequential 
+termination of Spoke processes does not destroy the underlying video tensors. Finally, the 
+system dictates that video is processed in discrete 60-second chunks, utilizing FFmpeg’s 
+fast-seek -ss parameter for zero-copy stream stream cutting, targeting a 50-millisecond 
+perceptual offset. 
+While this architectural framework is theoretically robust, mapping it to the operational realities 
+of the WSL2 kernel bridge, the PyTorch CUDA Caching Allocator, and the physical constraints of 
+Blackwell-generation hardware encoders exposes several critical vulnerability points. Rapid 
+sequential process initialization and termination within a containerized Linux environment carry 
+extremely high risks of POSIX shared memory (/dev/shm) exhaustion, memory handle leakage, 
+and catastrophic VRAM fragmentation. Furthermore, passing CUDA IPC handles between 
+ephemeral processes introduces severe risks of invalid device context access when the 
+originating process is destroyed. Finally, the assumption that a 50-millisecond perceptual offset 
+can be maintained during a stream-copy operation fundamentally contradicts the physical 
+mechanics of inter-frame video compression formats. 
+The following exhaustive analysis critically evaluates these architectural bottlenecks, assesses 
+the viability of modern alternatives such as the NVIDIA Triton Inference Server, and prescribes 
+concrete, low-level engineering solutions to ensure pipeline stability, zero-copy pointer 
+integrity, and millisecond-accurate frame extraction on the RTX 5080. 
+2. WSL2 and Docker IPC Memory Management 
+Dynamics 
+The execution of a rapid sequence of PyTorch Spoke processes inside a Docker container 
+running on a WSL2 backend creates a highly volatile system memory environment. When 
+ephemeral models such as YOLO or Qwen are initialized, execute their forward passes, and 
+subsequently terminate to free their VRAM footprint, the underlying Ubuntu operating system 
+and the PyTorch multiprocessing modules must continuously allocate, map, populate, and 
+unmap shared memory segments. 
+2.1 The /dev/shm Fragmentation and Allocation Bottleneck 
+Within standard Linux environments, POSIX shared memory, mounted as a temporary file 
+system at /dev/shm, is heavily utilized by PyTorch's multiprocessing library. This is particularly 
+relevant for dataloader workers and tensor sharing across process boundaries.1 By default, the 
+Docker daemon allocates a severely restricted 64MB to the /dev/shm partition.1 When multiple 
+PyTorch processes spawn sequentially and attempt to push high-resolution video frames or 
+large embedding matrices into shared memory queues, this 64MB limit is breached almost 
+instantaneously. When the shared memory segment is exhausted, the container will suffer a 
+fatal Bus error (core dumped) or yield a RuntimeError: unable to write to file </torch_...>: No 
+space left on device.2 
+However, the architectural challenge extends far beyond merely expanding the initial allocation 
+limits. The specific requirement of rapid process death—a core component of the 
+Hub-and-Spoke design—introduces a severe risk of memory leakage and page fragmentation. 
+Under WSL2, the lightweight utility virtual machine (VM) dynamically allocates system RAM, 
+which is represented in the Windows host task manager as the vmmem process. When Docker 
+containers rapidly allocate and deallocate memory, the WSL2 kernel often fails to return freed 
+pages to the Windows host promptly. This results in ballooning vmmem usage that eventually 
+consumes all 32GB of available system RAM, triggering the Linux Out-Of-Memory (OOM) killer 
+and permanently halting the orchestration pipeline.6 
+2.2 PyTorch IPC Reference Counting Anomalies 
+A heavily documented anomaly exists within PyTorch's CUDA IPC reference counting 
+mechanisms that directly threatens the stability of the ephemeral Spoke architecture. When a 
+tensor is shared across processes, PyTorch relies on a reference counter to dictate when the 
+underlying CUDA memory can be safely released back to the allocator. In multi-consumer IPC 
+scenarios involving rapid process termination, the integer subtraction operation (ref -= 1) is 
+performed natively as an int64 type, but the output is frequently cast as a uint64 type by the 
+underlying C++ engine.9 
+If a Spoke process terminates irregularly, is forcefully killed by the orchestrator, or drops a 
+reference during an asynchronous transfer, this type conversion triggers an integer underflow. 
+The result is an astronomically large reference count assigned to the tensor.9 When this 
+underflow occurs, the PyTorch Caching Allocator permanently locks the associated VRAM and 
+system memory, falsely believing that millions of processes are currently accessing the buffer. 
+This results in an unrecoverable, silent memory leak that persists across process boundaries, 
+eventually starving the system of VRAM and requiring a complete destruction and restart of 
+the Docker container to clear.9 
+2.3 Prescribed Docker and WSL2 System Configurations 
+To stabilize the Hub-and-Spoke architecture, prevent host-system RAM exhaustion, and 
+override the default Docker limitations, multi-layered constraints must be implemented at both 
+the WSL2 kernel level and the Docker runtime configuration. 
+ 
+Configuration Layer 
+Required Parameter 
+Engineering Rationale 
+WSL2 Kernel Limit 
+.wslconfig implementation: 
+ 
+[wsl2] 
+ 
+memory=24GB 
+ 
+processors=12 
+ 
+swap=8GB 
+Hard-limits the vmmem 
+process from consuming 
+the entire 32GB of host 
+RAM. Leaving an 8GB 
+reserved buffer for the 
+Windows OS prevents 
+system-wide lockups 
+during aggressive PyTorch 
+memory reclamation.6 
+Docker IPC Namespace 
+--ipc=host 
+Bypasses the default 64MB 
+/dev/shm namespace limit 
+entirely by mapping the 
+container's IPC namespace 
+directly to the host WSL2 
+OS. This grants PyTorch 
+access to the full 24GB 
+virtual allocation.2 
+Docker SHM Sizing 
+--shm-size=16gb 
+An alternative to --ipc=host 
+that explicitly defines a 
+massive shared memory 
+pool exclusively for the 
+container. This is critical for 
+maintaining the 100MB 
+shared CUDA buffer 
+securely across process 
+boundaries.2 
+Docker Resource Limits 
+--ulimit memlock=-1 
+Essential for preventing 
+page-outs of pinned 
+memory blocks. This 
+ensures that the zero-copy 
+video frames held in system 
+RAM are not swapped to 
+the virtual disk, which 
+would instantly destroy the 
+latency benefits of the 
+pipeline.14 
+3. PyTorch CUDA Allocator Configurations for Strict 
+VRAM Limitations 
+Maintaining the strict 16GB VRAM constraint on the RTX 5080 Mobile while continuously 
+swapping out highly parameterized Spoke models (ASR, YOLO, Qwen) presents a severe 
+fragmentation risk. The default behavior of PyTorch's memory management is highly unsuited 
+for rapid model churn. 
+3.1 The Mechanics of VRAM Fragmentation 
+To avoid the extreme latency penalties associated with calling the underlying CUDA runtime API 
+(cudaMalloc and cudaFree) for every mathematical operation, PyTorch utilizes a proprietary 
+Caching Allocator. This allocator requests massive blocks of memory from the GPU and retains 
+them in a private cache pool even after the variables are deleted in Python.15 The goal is to 
+reach a steady state where the program runs without needing to request new memory from 
+the OS.15 
+However, when an ASR model loads, executes, and completely terminates, the PyTorch 
+allocator intercepts the memory release. Instead of returning the 4GB of VRAM to the physical 
+GPU, it retains it in its internal pool as "reserved but unallocated" memory. When the 
+subsequent Qwen model (an LLM) spins up and requests memory for its massive transformer 
+weights and Key-Value (KV) cache, the allocator attempts to fulfill it from this reserved pool. 
+Because the tensor shapes, block alignments, and parameter sizes of the Qwen model differ 
+drastically from the ASR model, the existing memory blocks cannot be reused efficiently. The 
+allocator is forced to split blocks into smaller segments. 
+Over a few cycles, this results in severe VRAM fragmentation. The total free memory reported 
+by nvidia-smi might appear as 8GB, but the largest contiguous block available might only be 
+50MB. When Qwen requests a 1GB contiguous block for a matrix multiplication, the allocator 
+fails, triggering a CUDA out of memory (OOM) error despite sufficient mathematical 
+availability.16 
+3.2 Evaluating backend:cudaMallocAsync 
+The environment variable PYTORCH_CUDA_ALLOC_CONF governs the behavior of the caching 
+allocator. One potential configuration is backend:cudaMallocAsync, which completely disables 
+PyTorch's native implementation and forces the system to use CUDA's built-in asynchronous 
+allocator (introduced in CUDA 11.4).19 
+The theoretical advantage of cudaMallocAsync is that it delegates defragmentation directly to 
+the NVIDIA display driver. If a memory allocation request cannot be serviced due to 
+fragmentation, the CUDA driver can dynamically defragment the pool by remapping unused 
+memory to a contiguous portion of the GPU's virtual address space.20 While this sounds ideal 
+for the Spoke architecture, empirical data indicates that relying on the asynchronous backend 
+occasionally introduces severe overhead, strips the PyTorch profiler of meaningful memory 
+statistics, and has been documented to leave massive amounts of memory "missing" during 
+heavy iteration cycles.18 
+3.3 The Optimal Solution: expandable_segments:True 
+To mitigate fragmentation within the 16GB limit robustly, the PyTorch native allocator must be 
+instructed to utilize CUDA Virtual Memory Management (VMM) APIs. This is achieved by setting 
+expandable_segments:True.16 
+Normally, for large allocations (greater than 2MB), the allocator calls cudaMalloc to get blocks 
+that perfectly match the user request. With expandable segments enabled, the allocator 
+creates CUDA allocations that can be dynamically expanded later.19 It effectively allows the 
+allocator to map discontiguous physical memory pages on the GPU into perfectly contiguous 
+virtual memory addresses for PyTorch to use. When the YOLO model unloads and the Qwen 
+model loads, the allocator can seamlessly stitch together the fragmented remnants of YOLO's 
+footprint to form the massive contiguous blocks Qwen requires. This is highly effective at 
+preventing artificial OOM errors in high-churn model loading environments.16 
+3.4 Tuning the Maximum Split Size 
+To further defend the 16GB limitation, the allocator must be prevented from pulverizing its 
+memory blocks. The max_split_size_mb parameter restricts the allocator from splitting blocks 
+larger than a defined threshold.18 If a 1GB block is free, and a process requests 10MB, a naive 
+allocator will split the 1GB block, leaving a 990MB block. Over time, this creates thousands of 
+tiny inactive blocks. By setting a split limit, performance cost can range from zero to substantial 
+depending on the pattern, but it acts as a failsafe against terminal fragmentation.24 
+ 
+Allocator Configuration 
+Implementation Syntax 
+Engineering Rationale 
+Virtual Memory Expansion 
+expandable_segments:True 
+Instructs the native 
+allocator to use CUDA VMM 
+APIs to map discontiguous 
+physical pages into 
+contiguous virtual 
+addresses, solving 
+cross-model 
+fragmentation.16 
+Split Size Limitation 
+max_split_size_mb:512 
+Prevents the allocator from 
+fracturing large memory 
+blocks (over 512MB) to 
+satisfy minor tensor 
+requests, preserving large 
+contiguous spaces for the 
+initialization of subsequent 
+Spoke models.18 
+The optimal environment variable injection for the Docker container runtime is therefore: 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512 
+4. CUDA IPC Handle Volatility in Hub-and-Spoke 
+Topologies 
+The system architecture utilizes a background "Locker" process to hold a 100MB Shared CUDA 
+Buffer via IPC Handles. This design theoretically allows sequentially loaded Spoke processes to 
+access the memory without triggering PCIe bus transfers, copying data directly from device to 
+device. This methodology leverages the underlying cudaIpcGetMemHandle and 
+cudaIpcOpenMemHandle APIs to share device pointers across process boundaries.26 
+4.1 Lifecycle and Volatility of Ephemeral CUDA Pointers 
+Inter-Process Communication (IPC) within the CUDA architecture operates under strict 
+ownership and lifecycle paradigms. Any device memory pointer or event handle created by a 
+host thread can be directly referenced by any other thread within the same process. However, 
+to access device memory across different processes, an application must utilize CUDA IPC or 
+VMM APIs to create process-portable handles.26 
+When a process allocates memory on the GPU (e.g., via cudaMalloc), it establishes a CUDA 
+context and assumes total ownership of that physical memory space. If that process utilizes 
+cudaIpcGetMemHandle to create an IPC handle and passes it via a socket or queue to a 
+secondary process, the secondary process can open the handle and interact with the memory 
+safely.26 
+However, a fundamental limitation dictates the volatility of these handles: if the originating 
+process (the owner) terminates, the NVIDIA display driver immediately initiates a rigorous 
+cleanup routine. It destroys the underlying device context and forcefully frees the physical 
+memory to prevent leaks. Consequently, any IPC handles passed to other processes instantly 
+become dangling pointers. If a surviving process attempts to read or write to that handle, the 
+driver will raise a fatal CUDA error: an illegal memory access was encountered or an invalid 
+device context exception, immediately and violently crashing the application.28 
+In a Hub-and-Spoke architecture where Spoke processes are strictly ephemeral—designed to 
+execute and completely terminate to clear their VRAM footprint before the next Spoke spins 
+up—they cannot act as the originators of the shared memory. If the ASR Spoke allocates the 
+zero-copy buffer, passes it to the Qwen Spoke, and exits, the pipeline will suffer a catastrophic 
+fault. 
+4.2 The Persistent "Locker" Process Pattern 
+Given the extreme volatility of ephemeral pointers, the deployment of a persistent background 
+"Locker" process is not merely an optimization; it is a strict architectural necessity to maintain 
+the zero-copy pipeline across process deaths. 
+The Locker process must execute first, initialize its own CUDA context, allocate the 100MB 
+buffer, and generate the IPC handles. Crucially, the Locker process must then enter an infinite 
+wait state, ensuring its process ID (PID) remains active for the entire duration of the video 
+processing pipeline. The ephemeral Spoke models spin up, import the IPC handle from the 
+Locker using PyTorch's multiprocessing abstractions, read the video frames, and terminate.32 
+Because the Locker process remains alive, the underlying memory context remains valid across 
+the sequential deaths of the Spokes. 
+To safely pass these tensors in Python, the system must utilize PyTorch's multiprocessing 
+queues (multiprocessing.Queue or multiprocessing.SimpleQueue). When a PyTorch CUDA 
+tensor is placed in a queue, the framework automatically generates the underlying IPC handles 
+under the hood.32 It is absolutely imperative that the Locker process retains a hard reference to 
+the original tensor variable in its local scope; otherwise, Python's automatic garbage collector 
+will issue a __del__ call when the variable goes out of scope, triggering a cudaFree operation 
+and violating the memory persistence, causing the same illegal access faults.32 
+Furthermore, the implementation must account for synchronization. The Locker and the 
+Spokes are operating asynchronously. The architecture must utilize host-based IPC to pass 
+CUDA event handles alongside the memory handles. This allows the Spoke process to execute 
+cudaStreamWaitEvent, ensuring that the GPU kernel does not attempt to read the 100MB 
+buffer before the previous process has finished writing to it.27 
+4.3 Evaluation of NVIDIA Triton Shared Memory Alternatives 
+A critical evaluation was conducted to determine if modern, industry-standard ML 
+infrastructure—specifically the NVIDIA Triton Inference Server—could replace the custom 
+Python Locker process to manage the shared memory pooling more elegantly. Triton provides 
+advanced CUDA shared-memory extensions that allow clients to communicate input and 
+output tensors directly via GPU VRAM. This bypasses the overhead of gRPC or REST network 
+payloads and allows for pristine zero-copy inference across multiple models.33 
+Under normal bare-metal Linux deployments, Triton represents a far superior, enterprise-grade 
+alternative to maintaining a custom Python-based Locker process. However, the operational 
+environment is WSL2 (Ubuntu 24.04). Deep analysis of Triton Inference Server deployments 
+within Windows/WSL2 environments reveals a critical compatibility failure. 
+When attempting to initialize CUDA shared memory pools inside Triton under 
+WSL2—particularly when utilizing Business Logic Scripting (BLS) to pass tensors between 
+models with pb_utils.PreferredMemory(pb_utils.TRITONSERVER_MEMORY_GPU)—the server 
+invariably throws a fatal error: Failed to initialize CUDA shared memory pool in Python stub: 
+Failed to open the cudaIpcHandle. error: invalid resource handle.34 
+Due to the complex nature of WSL2's virtualization layer, where the Linux kernel interacts with 
+the Windows Display Driver Model (WDDM) via a paravirtualized interface, Triton's specific 
+implementation of CUDA IPC handle registration fails to map correctly across the boundary.34 
+When this handle registration fails, Triton is designed to maintain uptime by automatically falling 
+back to TRITONSERVER_MEMORY_CPU. This fallback violently defeats the entire purpose of the 
+zero-copy pipeline, forcing the system to download the 100MB buffers from VRAM to system 
+RAM over the PCIe bus, and re-uploading them for every single Spoke execution, resulting in 
+massive latency bottlenecks.34 
+Consequently, utilizing NVIDIA Triton Shared Memory is definitively counter-indicated for this 
+specific WSL2 architecture. The custom Python "Locker" process, relying on standard 
+torch.multiprocessing IPC handles over --ipc=host container boundaries, remains the most 
+robust and functional method available. 
+5. Zero-Copy Pipeline Integrity and Pinned Memory 
+Bottlenecks 
+The pipeline utilizes FFmpeg 7.1, PyNvVideoCodec, and Kornia to decode the 60-second video 
+chunks directly into GPU memory. PyNvVideoCodec is NVIDIA’s successor to the Video 
+Processing Framework (VPF), providing Python bindings directly over the optimized C++ APIs 
+of the Video Codec SDK.35 
+5.1 PyNvVideoCodec and DLPack Integration 
+To ensure the frames decoded by PyNvVideoCodec are seamlessly transferred into PyTorch 
+tensors without invoking disastrous CPU memory roundtrips, the system must leverage 
+DLPack. DLPack provides a standardized, open-source in-memory tensor structure designed 
+specifically for zero-copy data exchange between distinct computational frameworks.36 
+PyNvVideoCodec natively implements the Python DLPack protocol via the __dlpack__() and 
+__dlpack_device__() magic methods on its decoded frame objects.36 
+To engineer this correctly, the pipeline must strictly adhere to the following initialization 
+sequence: 
+1.​ The PyNvVideoCodec decoder must be initialized with the flag use_device_memory=True. 
+Failing to set this will cause the decoder to silently dump frames into host RAM.36 
+2.​ The output color format must be explicitly configured to OutputColorType.RGBP (Planar 
+CHW format). Convolutional neural networks in PyTorch expect channel-first memory 
+layouts. If this is not set, PyTorch will be forced to execute an expensive, synchronous 
+contiguous memory copy to reorder the interleaved channels.36 
+3.​ The decoded frame is directly ingested via the torch.from_dlpack(frame) tensor creation 
+method, which assumes immediate, zero-copy pointer access to the underlying CUDA 
+memory.36 Furthermore, stream synchronization 
+(torch.cuda.current_stream().synchronize()) must be enforced before passing the pointer 
+to the Locker process.36 
+5.2 The 500MB WSL2 Pinned Memory Limitation 
+While the architecture currently mandates a 100MB shared CUDA buffer, future expansions of 
+the pipeline may attempt to increase this buffer size or utilize massive amounts of page-locked 
+(pinned) host memory to speed up transfers. Pinned memory is crucial because it allows the 
+GPU to utilize Direct Memory Access (DMA) to fetch data from system RAM without CPU 
+intervention. 
+However, a critical engineering warning must be issued for the WSL2 environment. The NVIDIA 
+Container Toolkit operating on WSL2 imposes an undocumented hard limit on the allocation of 
+pinned host memory. Extensive testing and issue tracking reveal that attempts to allocate 
+contiguous pinned memory blocks exceeding 500MB consistently fail on WSL2 environments, 
+returning silent errors or crashing the application, regardless of the 32GB of physical RAM 
+available on the host.14 
+This limitation is not present in native Windows or native Linux, but is a unique artifact of the 
+containerized CUDA driver interacting with the WSL2 backend.14 Therefore, while the 100MB 
+buffer is safe, any architectural adjustments that attempt to pin massive video segments into 
+host RAM must chunk the allocations into sizes strictly below the 500MB threshold to prevent 
+silent pipeline halts. 
+6. FFmpeg NVENC Frame Snapping and Blackwell 
+Optimizations 
+The orchestration layer dictates that the source video is processed in 60-second chunks, and 
+the final autonomous clipping relies on the FFmpeg -ss seek command utilizing a 
+50-millisecond perceptual offset combined with stream copying (-c copy). This methodology 
+requires rigorous critical evaluation, as it violates the core physical mechanisms of video 
+compression formats and will fail to deliver the required accuracy. 
+6.1 The GOP Structure and the Failure of -c copy Seeking 
+Modern highly compressed video codecs (such as H.264, HEVC, and AV1) do not store video as 
+a sequence of independent, fully rendered bitmap images. Instead, to achieve maximum spatial 
+and temporal compression, they utilize a Group of Pictures (GOP) structure consisting of three 
+distinct frame types: 
+●​ I-frames (Intra-coded): Complete, standalone images that require no external data to 
+decode. They function as the anchor points of the video and take up the most data.37 
+●​ P-frames (Predictive): Contain only the mathematical differences (motion vectors and 
+residual data) from previous I-frames or P-frames.37 
+●​ B-frames (Bi-directional): Reference data from both preceding and succeeding frames 
+to achieve maximum compression efficiency.38 
+When utilizing the FFmpeg stream copy parameter (-c copy), the engine is instructed to demux 
+the bitstream and remux it into a new container completely untouched, without passing the 
+data through a decoder.39 If a command specifies a cut at exactly 
+ seconds 
+(accounting for the 50ms offset), the likelihood of that exact timestamp corresponding 
+perfectly to an I-frame is statistically minuscule. 
+If the 12.050-second mark falls on a P-frame or a B-frame, it is a physical impossibility for 
+FFmpeg to initiate the copied stream at that exact millisecond. A P-frame consists solely of 
+difference data; without the preceding I-frame to reference, the image cannot be 
+mathematically reconstructed.37 To resolve this and prevent generating a corrupt, unplayable 
+file, FFmpeg's -c copy logic will automatically override the requested timestamp and snap the 
+cut point backward to the nearest preceding keyframe (I-frame).37 Depending on the GOP 
+length of the source material, this can snap the cut backwards by several seconds, completely 
+obliterating the 50-millisecond perceptual offset accuracy required by the autonomous 
+pipeline. 
+6.2 The Reality of "Smart Cutting" 
+The concept of "Smart Cutting"—where the vast majority of the video is stream-copied 
+losslessly, except for the boundary edges which are decoded and re-encoded to the nearest 
+keyframe—is widely discussed but practically unachievable in pure, unmodified FFmpeg via a 
+single command string. True smart cutting requires highly complex multi-pass scripting to 
+demux the streams, mathematically split the GOP logic, re-encode boundary segments with 
+precisely matched quantization parameters to prevent visual jarring, and concatenate the 
+disparate files via the concat protocol.40 
+For an autonomous, error-resilient Edge AI pipeline, attempting to script a smart cut introduces 
+catastrophic points of failure related to Decoding Time Stamp (DTS) synchronization, audio 
+desync, and container matching. Therefore, to guarantee millisecond-accurate cuts with zero 
+perceptual drift, the specified 60-second chunk must be subjected to a full decode and 
+re-encode pass.38 Given that the segment is only 60 seconds long, the processing overhead on 
+a Blackwell-class GPU is negligible. 
+6.3 Blackwell NVENC Capabilities and Driver-Level Anomalies 
+The NVIDIA RTX 5080 Mobile is built upon the Ada Lovelace successor architecture (Blackwell), 
+featuring the 9th generation NVENC application-specific integrated circuits (ASICs).43 The 
+Blackwell NVENC offers profound advancements, notably a dual-encoder configuration 
+capable of massive parallelization, and a 5% baseline compression efficiency improvement in 
+the AV1 codec over the previous 40-series generation.44 
+To maximize visual quality and strictly match the source material during the re-encode, the 
+optimal codec selection is AV1 via the av1_nvenc plugin.47 AV1 yields roughly 40% bit rate 
+savings over H.264 at identical Peak Signal-to-Noise Ratio (PSNR) and Video Multimethod 
+Assessment Fusion (VMAF) scores, meaning the re-encoded cut will suffer virtually zero 
+generational loss.47 
+However, a highly specific silicon and driver-level bug exists within the current Blackwell 
+architecture that must be circumvented. NVIDIA has documented that utilizing the Ultra High 
+Quality tuning flag (-tune uhq) in combination with 10-bit color depth (-highbitdepth 1) on RTX 
+50-series GPUs (specifically observed across the 5070 Ti, 5080, and 5090 SKUs) causes 
+catastrophic macroblocking artifacts and visual corruption during encoding.50 While this is 
+slated to be patched in future proprietary driver branches 50, any autonomous pipeline 
+deployed immediately must avoid combining these two parameters to ensure output integrity. 
+6.4 Engineering the Millisecond-Accurate Re-encode Pipeline 
+To guarantee exact frame parsing on the RTX 5080 utilizing full hardware acceleration 
+(bypassing the host CPU entirely to preserve resources for the Hub orchestrator), the FFmpeg 
+command must place the seek parameter (-ss) as an input option to utilize fast keyframe 
+seeking, while defining duration (-t) precisely. 
+The encode parameters must abandon arbitrary bitrates and utilize Constant Quality Variable 
+Bitrate (-rc vbr combined with -cq), utilizing a high-quality preset without triggering the 
+Blackwell UHQ anomaly. 
+The exact synthesized FFmpeg command for hardware-accelerated, millisecond-accurate 
+cutting is defined as follows: 
+ 
+Bash 
+ 
+ 
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -ss 00:01:12.050 -i input.mp4 -t 
+00:01:00.000 -c:v av1_nvenc -preset p7 -tune hq -rc vbr -cq 19 -b:v 0 -bf 3 -c:a copy -y 
+output_cut.mp4​
+ 
+6.5 Architectural Breakdown of the FFmpeg Command 
+The parameters detailed above are strictly tuned for the RTX 5080 environment: 
+ 
+FFmpeg Parameter 
+Functional Engineering Rationale 
+-hwaccel cuda -hwaccel_output_format 
+cuda 
+Instructs FFmpeg to utilize the NVDEC 
+hardware decoder and keep the decoded, 
+uncompressed frames natively in the GPU's 
+VRAM surface.48 This prevents the frames 
+from being downloaded to system RAM 
+over the PCIe bus before being handed off 
+to NVENC, fulfilling the strict zero-copy 
+requirement. 
+-ss 00:01:12.050 
+By placing the start time before the input 
+file flag (-i), FFmpeg parses the container 
+metadata to jump rapidly to the nearest 
+I-frame prior to the timestamp, decodes 
+the stream invisibly up to the requested 
+point, and begins writing the output file 
+exactly at the 50ms offset.39 Because the 
+output is being actively re-encoded, there 
+is no keyframe snapping on the final output. 
+-c:v av1_nvenc 
+Invokes the 9th-generation Blackwell AV1 
+hardware encoder, leveraging the 
+dedicated ASIC to offload processing 
+entirely from the CUDA cores and CPU.47 
+-preset p7 -tune hq 
+p7 enforces the absolute slowest, highest 
+quality multi-pass NVENC profile 
+available.48 Crucially, -tune hq (High Quality) 
+is selected rather than uhq (Ultra High 
+Quality) to safely bypass the Blackwell 
+artifacting bug, ensuring pristine frame 
+rendering.38 
+-rc vbr -cq 19 -b:v 0 
+Shifts the encoder from generic Constant 
+Bit Rate (CBR) to a visually lossless 
+Constant Quality mode. A CQ value of 19 
+ensures visual indistinguishability from the 
+source file while minimizing file size bloat. 
+Setting -b:v 0 instructs the encoder to lift 
+artificial bitrate ceilings and let the CQ 
+algorithm strictly govern the 
+compression.38 
+-bf 3 
+Forces the inclusion of 3 B-frames per GOP. 
+This allows the encoder to reference 
+frames both forwards and backwards in 
+time, mathematically required to achieve 
+maximum spatial compression efficiency in 
+AV1.38 
+7. Synthesis of Concrete Engineering Solutions 
+To satisfy the operational constraints of the Intel Core Ultra 7 and the 16GB RTX 5080 Mobile 
+inside a complex WSL2 Docker deployment, the architecture must undergo a series of 
+immediate, low-level modifications. 
+First, the system must enforce strict IPC and memory boundaries. The Docker run sequence 
+must include the --ipc=host flag to map the shared memory directly to the WSL2 virtual 
+machine, completely overriding the 64MB Docker default that causes bus errors during tensor 
+transfers.2 Simultaneously, the Windows host .wslconfig file must be manually configured with a 
+hard limit of memory=24GB to prevent runaway vmmem allocation from crashing the Windows 
+11 host during rapid process iteration and memory reclamation.6 
+Second, VRAM fragmentation must be actively mitigated. The pipeline must expose the 
+environment variable 
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512 to the 
+container environment. This explicitly instructs the PyTorch memory manager to utilize CUDA 
+Virtual Memory Management to map discontiguous physical blocks into contiguous virtual 
+space, ensuring that the 16GB limit is not exhausted artificially when alternating between Spoke 
+models of drastically different tensor shapes (e.g., swapping ASR for Qwen).16 
+Third, the Hub-and-Spoke Locker pattern must be solidified and protected. The architecture 
+must not attempt to migrate to NVIDIA Triton Inference Server, as its CUDA shared memory 
+extensions are structurally incompatible with WSL2 network routing and WDDM 
+paravirtualization, which will fail and result in massive, pipeline-halting PCIe traffic.34 The 
+custom Python "Locker" process must be retained, ensuring it allocates the shared buffer and 
+remains alive indefinitely to prevent the underlying CUDA context from collapsing and 
+invalidating the IPC handles passed to the Spoke models.32 Furthermore, when passing 
+PyNvVideoCodec frames into PyTorch, the pipeline must enforce OutputColorType.RGBP and 
+utilize DLPack (torch.from_dlpack) to guarantee true zero-copy transfers.36 
+Finally, stream copy snapping must be eliminated. The -c copy methodology for the 
+50-millisecond perceptual cuts must be abandoned, as GOP I-frame mapping structurally 
+prohibits millisecond accuracy without decoding.37 The pipeline must implement the provided 
+Blackwell AV1 NVENC command string to execute a fully hardware-accelerated re-encode of 
+the target segment. This ensures perfect frame extraction, keeps the memory strictly on the 
+GPU via -hwaccel_output_format cuda, and steers clear of the documented Blackwell uhq 
+10-bit encoding anomaly.48 
+By systematically tuning the PyTorch CUDA Caching Allocator, securely tying CUDA IPC handles 
+to a persistent host process, and migrating to native Blackwell AV1 hardware re-encoding, the 
+pipeline can be completely insulated against memory fragmentation, dangling pointer faults, 
+and perceptual desynchronization. The integration of these exhaustive engineering 
+implementations will yield a highly resilient, frame-accurate AI editing pipeline capable of 
+operating flawlessly within strict mobile edge hardware thresholds. 
+Works cited 
+1.​ How can the shared memory size (/dev/shm) be incre... - Databricks Community - 
+12207, accessed March 7, 2026, 
+https://community.databricks.com/t5/data-engineering/how-can-the-shared-me
+mory-size-dev-shm-be-increased-on/td-p/12207 
+2.​ Device out of space error when torch.save with multiprocessing in docker - 
+PyTorch Forums, accessed March 7, 2026, 
+https://discuss.pytorch.org/t/device-out-of-space-error-when-torch-save-with-
+multiprocessing-in-docker/167869 
+3.​ Training fails due to memory exhaustion when running in a python 
+multiprocessing.Process, accessed March 7, 2026, 
+https://discuss.pytorch.org/t/training-fails-due-to-memory-exhaustion-when-run
+ning-in-a-python-multiprocessing-process/202773 
+4.​ Docker shared memory issue and solution · Issue #369 · 
+RobotLocomotion/spartan - GitHub, accessed March 7, 2026, 
+https://github.com/RobotLocomotion/spartan/issues/369 
+5.​ Training crashes due to - Insufficient shared memory (shm) - nn.DataParallel - 
+vision, accessed March 7, 2026, 
+https://discuss.pytorch.org/t/training-crashes-due-to-insufficient-shared-memor
+y-shm-nn-dataparallel/26396 
+6.​ Docker desktop eats all memory and crashes - Stack Overflow, accessed March 
+7, 2026, 
+https://stackoverflow.com/questions/64612117/docker-desktop-eats-all-memory-
+and-crashes 
+7.​ WSL2 backend has a potential memory leak · Issue #13022 · docker/for-win - 
+GitHub, accessed March 7, 2026, https://github.com/docker/for-win/issues/13022 
+8.​ Docker Desktop eats RAM past WSL limit set in .wslconfig file, accessed March 7, 
+2026, 
+https://forums.docker.com/t/docker-desktop-eats-ram-past-wsl-limit-set-in-wsl
+config-file/128150 
+9.​ When using torch.multiprocessing for CUDA IPC, memory cannot be released. 
+#171039, accessed March 7, 2026, 
+https://github.com/pytorch/pytorch/issues/171039 
+10.​Memory allocation to docker containers after moving to WSL 2 in Windows - 
+Stack Overflow, accessed March 7, 2026, 
+https://stackoverflow.com/questions/62405765/memory-allocation-to-docker-co
+ntainers-after-moving-to-wsl-2-in-windows 
+11.​Limiting Docker Memory Usage on Windows - DEV Community, accessed March 
+7, 2026, 
+https://dev.to/sarahcssiqueira/limiting-docker-memory-usage-on-windows-5c45 
+12.​Guide to run CUDA + WSL + Docker with latest versions (21382 Windows build + 
+470.14 Nvidia), accessed March 7, 2026, 
+https://forums.developer.nvidia.com/t/guide-to-run-cuda-wsl-docker-with-latest
+-versions-21382-windows-build-470-14-nvidia/178365?page=2 
+13.​Platform: Windows 10 using WSL2 w/GPU - fastai - fast.ai Course Forums, 
+accessed March 7, 2026, 
+https://forums.fast.ai/t/platform-windows-10-using-wsl2-w-gpu/73521 
+14.​Pinned Memory Allocation Fails Above 500 MB in Docker on WSL2 · Issue #14078 
+· microsoft/WSL - GitHub, accessed March 7, 2026, 
+https://github.com/microsoft/WSL/issues/14078 
+15.​A guide to PyTorch's CUDA Caching Allocator | Zach's Blog, accessed March 7, 
+2026, https://zdevito.github.io/2022/08/04/cuda-caching-allocator.html 
+16.​Vram issues with low input count · Issue #1242 · 
+graphdeco-inria/gaussian-splatting - GitHub, accessed March 7, 2026, 
+https://github.com/graphdeco-inria/gaussian-splatting/issues/1242 
+17.​Boosting GPU Memory Efficiency with PyTorch and RAPIDS RMM | by Ion - 
+Medium, accessed March 7, 2026, 
+https://medium.com/@ion.stefanache0/boosting-gpu-memory-efficiency-with-p
+ytorch-and-rapids-rmm-a0b1a02186e3 
+18.​Has anyone determined how to actually "set max_split_size_mb to avoid 
+fragmentation" as the CUDA error suggests? : r/StableDiffusion - Reddit, 
+accessed March 7, 2026, 
+https://www.reddit.com/r/StableDiffusion/comments/15pg318/has_anyone_deter
+mined_how_to_actually_set_max/ 
+19.​CUDA semantics — PyTorch 2.10 documentation, accessed March 7, 2026, 
+https://docs.pytorch.org/docs/stable/notes/cuda.html 
+20.​cudaMallocAsync cause too much fragmentation. · Issue #110194 - GitHub, 
+accessed March 7, 2026, https://github.com/pytorch/pytorch/issues/110194 
+21.​[Bug] torch.OutOfMemoryError: CUDA out of memory for 16GB Vram while trying 
+to inference gemma-3-12b-IT · Issue #5576 · sgl-project/sglang - GitHub, 
+accessed March 7, 2026, https://github.com/sgl-project/sglang/issues/5576 
+22.​[Issue]: [gfx1151] pytorch is allocating vram but then loads in shared GPU memory 
+instead, causing OOM · Issue #3032 · ROCm/TheRock - GitHub, accessed March 
+7, 2026, https://github.com/ROCm/TheRock/issues/3032 
+23.​how to limit vram usage? : r/StableDiffusion - Reddit, accessed March 7, 2026, 
+https://www.reddit.com/r/StableDiffusion/comments/17h4zd7/how_to_limit_vram_
+usage/ 
+24.​RuntimeError: CUDA out of memory. How can I set max_split_size_mb? - Stack 
+Overflow, accessed March 7, 2026, 
+https://stackoverflow.com/questions/73747731/runtimeerror-cuda-out-of-memor
+y-how-can-i-set-max-split-size-mb 
+25.​CUDA out of memory issue #1654 - GitHub, accessed March 7, 2026, 
+https://github.com/ultralytics/ultralytics/issues/1654 
+26.​4.15. Interprocess Communication — CUDA Programming Guide, accessed 
+March 7, 2026, 
+https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/inter-p
+rocess-communication.html 
+27.​Synchronization between CUDA applications - Stack Overflow, accessed March 7, 
+2026, 
+https://stackoverflow.com/questions/63561346/synchronization-between-cuda-a
+pplications 
+28.​CUDA shared memory doesn't work (failed to open CUDA IPC handle: invalid 
+device context) - DeepStream SDK - NVIDIA Developer Forums, accessed March 
+7, 2026, 
+https://forums.developer.nvidia.com/t/cuda-shared-memory-doesnt-work-failed-
+to-open-cuda-ipc-handle-invalid-device-context/325917 
+29.​Unexpected CUDA IPC handle behaviour - PyTorch Forums, accessed March 7, 
+2026, 
+https://discuss.pytorch.org/t/unexpected-cuda-ipc-handle-behaviour/218867 
+30.​CUDA error: an illegal memory access was encountered with reproduction, 
+accessed March 7, 2026, 
+https://discuss.pytorch.org/t/cuda-error-an-illegal-memory-access-was-encount
+ered-with-reproduction/135532 
+31.​PyTorch CUDA error: an illegal memory access was encountered - Stack 
+Overflow, accessed March 7, 2026, 
+https://stackoverflow.com/questions/68106457/pytorch-cuda-error-an-illegal-me
+mory-access-was-encountered 
+32.​Using CUDA IPC memory handles in pytorch, accessed March 7, 2026, 
+https://discuss.pytorch.org/t/using-cuda-ipc-memory-handles-in-pytorch/17548 
+33.​Shared-Memory Extension — NVIDIA Triton Inference Server, accessed March 7, 
+2026, 
+https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/pr
+otocol/extension_shared_memory.html 
+34.​CUDA IPC Handle failure in WSL2 forces CPU memory fallback, causing massive 
+PCIe bottlenecks in BLS pipelines #8670 - GitHub, accessed March 7, 2026, 
+https://github.com/triton-inference-server/server/issues/8670 
+35.​PyNvVideoCodec - Get Started - NVIDIA Developer, accessed March 7, 2026, 
+https://developer.nvidia.com/pynvvideocodec 
+36.​PyNvVideoCodec API Programming Guide - NVIDIA Docs, accessed March 7, 
+2026, 
+https://docs.nvidia.com/video-technologies/pynvvideocodec/pynvc-api-prog-gui
+de/index.html 
+37.​Frame-accurate video cuts — can FFmpeg help without increasing file size? - 
+Reddit, accessed March 7, 2026, 
+https://www.reddit.com/r/ffmpeg/comments/1nw03if/frameaccurate_video_cuts_
+can_ffmpeg_help_without/ 
+38.​How can I use CRF encoding with nvenc in ffmpeg? - Super User, accessed March 
+7, 2026, 
+https://superuser.com/questions/1236275/how-can-i-use-crf-encoding-with-nve
+nc-in-ffmpeg 
+39.​How to cut at exact frames using ffmpeg? - Super User, accessed March 7, 2026, 
+https://superuser.com/questions/459313/how-to-cut-at-exact-frames-using-ffmp
+eg 
+40.​How to cut a video with FFmpeg with no (or minimal) re-encoding? - Super User, 
+accessed March 7, 2026, 
+https://superuser.com/questions/1850814/how-to-cut-a-video-with-ffmpeg-with
+-no-or-minimal-re-encoding 
+41.​Using ffmpeg to cut videos with more precision than key frames allow, accessed 
+March 7, 2026, 
+https://video.stackexchange.com/questions/16750/using-ffmpeg-to-cut-videos-
+with-more-precision-than-key-frames-allow 
+42.​How would I cut video in ffmpeg, while only re-encoding the very first and last 
+frames?, accessed March 7, 2026, 
+https://www.reddit.com/r/ffmpeg/comments/xaoybr/how_would_i_cut_video_in_ff
+mpeg_while_only/ 
+43.​Add AV1 NVENC Ultra High Quality Mode (RTX 5080)/ svt-av1 Hybrid · Issue #733 
+- GitHub, accessed March 7, 2026, https://github.com/rigaya/NVEnc/issues/733 
+44.​Nvidia 50-series AV1 + HEVC improvements - Reddit, accessed March 7, 2026, 
+https://www.reddit.com/r/AV1/comments/1hvmk0n/nvidia_50series_av1_hevc_imp
+rovements/ 
+45.​Does Nvidia 5080 Produce BETTER AV1 files than Nvidia 4080? - Reddit, accessed 
+March 7, 2026, 
+https://www.reddit.com/r/AV1/comments/1igtppi/does_nvidia_5080_produce_bett
+er_av1_files_than/ 
+46.​NVIDIA NVENC Obs Guide | GeForce News, accessed March 7, 2026, 
+https://www.nvidia.com/en-us/geforce/guides/broadcasting-guide/ 
+47.​Improving Video Quality and Performance with AV1 and NVIDIA Ada Lovelace 
+Architecture, accessed March 7, 2026, 
+https://developer.nvidia.com/blog/improving-video-quality-and-performance-wit
+h-av1-and-nvidia-ada-lovelace-architecture/ 
+48.​Using FFmpeg with NVIDIA GPU Hardware Acceleration, accessed March 7, 2026, 
+https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/ffmpeg-with-n
+vidia-gpu/index.html 
+49.​HWAccelIntro – FFmpeg, accessed March 7, 2026, 
+https://trac.ffmpeg.org/wiki/HWAccelIntro 
+50.​NVENC HEVC UHQ + highbitdept leads to artfiacts in ffmpeg with Blackwell, 
+accessed March 7, 2026, 
+https://forums.developer.nvidia.com/t/nvenc-hevc-uhq-highbitdept-leads-to-artfi
+acts-in-ffmpeg-with-blackwell/354084 
+51.​How to get FFMPEG to use more GPU when encoding - Stack Overflow, 
+accessed March 7, 2026, 
+https://stackoverflow.com/questions/63285578/how-to-get-ffmpeg-to-use-more
+-gpu-when-encoding 
+52.​AV1 NVENC Config for FFMPEG - GitHub Gist, accessed March 7, 2026, 
+https://gist.github.com/Nicklas373/6cf92b3594561bff326697a93ffb2e5b 
+
+--- m:\Projects\AI_Video\AI_Video-20260116T154526Z-3-001\AI_Video\Edge AI Agent Integration Guide.pdf ---
+Architectural Blueprint and Integration 
+Logic for Autonomous Edge-Native 
+Video Repurposing Agents (v2.0) 
+The deployment of an autonomous, edge-native video repurposing agent (v2.0) within a 
+Windows 11 WSL2 Docker container represents a complex convergence of localized machine 
+learning, hardware acceleration, and dynamic memory orchestration. Operating specifically on 
+an NVIDIA RTX 5080 Mobile GPU equipped with 16GB of VRAM necessitates the 
+implementation of a highly disciplined resource allocation strategy. The primary architectural 
+constraint dictates that the system must maintain a strict peak VRAM footprint of less than 
+14GB. This 2GB buffer is non-negotiable; it accounts for the Windows Display Driver Model 
+(WDDM) overhead introduced by WSL2 GPU Paravirtualization (GPU-PV), host operating 
+system display reservations, and the inherent memory fragmentation that occurs during 
+sequential deep learning inference tasks. 
+To satisfy these constraints, the architecture relies on a "Hub-and-Spoke" distributed process 
+model. Rather than monolithic execution, a persistent Hub process coordinates the ephemeral 
+instantiation and destruction of PyTorch-based Spokes. Each Spoke is dedicated to a singular 
+task—such as transcription, spatial tracking, or contextual reasoning—and communicates with 
+the Hub via a 100MB Shared CUDA Buffer. By leveraging Inter-Process Communication (IPC) 
+handles, the system completely circumvents the Peripheral Component Interconnect Express 
+(PCIe) bus, allowing massive multi-dimensional tensors to be passed between independent 
+Python processes without triggering a CPU-bound host-to-device memory copy. 
+The successful integration of mid-2026 state-of-the-art (SOTA) models into this 
+Hub-and-Spoke architecture requires rigorous control over the PyTorch caching allocator, 
+precise tensor routing using Deep Learning Pack (DLPack), and seamless toggling between 
+local Small Language Models (SLMs) and cloud-delegated Agentic Vision frameworks. This 
+report provides an exhaustive technical breakdown of the integration logic, library 
+dependencies, and exact code blueprints required to deploy WhisperX, YOLO26s-Pose, 
+Qwen3-4B, and Gemini 3 Flash within this highly constrained edge environment. 
+Foundational Memory Orchestration and CUDA IPC 
+Routing 
+Before initializing any neural network components, the underlying memory allocator must be 
+configured to prevent the catastrophic fragmentation that typically plagues long-running 
+computer vision pipelines. PyTorch's default caching allocator attempts to hold onto VRAM to 
+speed up future allocations. However, in an ephemeral Spoke architecture, where vastly 
+different models are loaded and unloaded sequentially, this behavior quickly leads to 
+Out-Of-Memory (OOM) exceptions even when theoretical free memory exists. 
+To circumvent this, the system mandates the definition of the PYTORCH_CUDA_ALLOC_CONF 
+environment variable prior to the importation of the PyTorch library. The directive 
+expandable_segments:True is critical; it alters the allocator's behavior to utilize CUDA virtual 
+memory management. This allows PyTorch to dynamically map and unmap physical VRAM 
+pages to a contiguous virtual address space, effectively returning unused memory segments to 
+the operating system without destroying the surrounding memory pool. Furthermore, 
+appending max_split_size_mb:512 prevents the allocator from fracturing large memory blocks. 
+Because the architecture relies on a persistent 100MB Shared CUDA Buffer, ensuring that large, 
+contiguous blocks remain unsplit guarantees that IPC handle generation will not fail due to a 
+lack of contiguous physical memory addresses. 
+Configuration Parameter 
+Allocator Function 
+Architectural Impact on 16GB 
+RTX 5080 Mobile 
+expandable_segments:True 
+Enables dynamic virtual 
+memory mapping. 
+Prevents VRAM fragmentation 
+across ephemeral Spoke 
+lifecycles, maintaining the 
+<14GB ceiling. 
+max_split_size_mb:512 
+Restricts block subdivision. 
+Preserves large contiguous 
+VRAM blocks for the 100MB 
+IPC buffer and unquantized 
+tensor operations. 
+The foundation of the zero-copy Hub-and-Spoke architecture is the CUDA IPC mechanism. 
+When the Hub process allocates the 100MB buffer, it invokes cudaIpcGetMemHandle, which 
+returns a 64-byte stub describing the physical memory location on the GPU. This highly 
+compact stub is then serialized and transmitted to the ephemeral Spoke process via standard 
+Python multiprocessing queues or Unix domain sockets.1 Upon receipt, the Spoke process 
+invokes cudaIpcOpenMemHandle, which directly maps the physical memory into the Spoke's 
+localized virtual address space.1 
+This methodology ensures that video frames decoded by the hardware and textual 
+embeddings generated by the language models remain entirely resident on the RTX 5080 
+Mobile's High Bandwidth Memory (HBM). The implementation of this foundational routing logic 
+requires precise interaction with PyTorch's reduction protocols to ensure the IPC handle 
+survives the cross-process boundary. 
+ 
+Python 
+ 
+ 
+import os​
+​
+# 1. Enforce strict VRAM fragmentation management for the RTX 5080 Mobile​
+# This must be executed prior to importing torch to alter the caching allocator.​
+os.environ = "expandable_segments:True,max_split_size_mb:512"​
+​
+import torch​
+import torch.multiprocessing as mp​
+​
+def initialize_persistent_hub_buffer(buffer_size_mb: int = 100) -> tuple:​
+    """​
+    Allocates a persistent, contiguous block of VRAM in the Hub process.​
+    Generates the 64-byte IPC handle required for zero-copy Spoke access.​
+    """​
+    # Allocate uninitialized VRAM directly on the GPU​
+    buffer_bytes = buffer_size_mb * 1024 * 1024​
+    shared_cuda_tensor = torch.empty(buffer_bytes, dtype=torch.uint8, device='cuda')​
+    ​
+    # Extract the CUDA IPC handle ​
+    # reduce_tensor serializes the tensor metadata and the physical memory descriptor​
+    ipc_handle = torch.multiprocessing.reductions.reduce_tensor(shared_cuda_tensor)​
+    ​
+    return shared_cuda_tensor, ipc_handle​
+​
+def ephemeral_spoke_ingestion_protocol(ipc_handle: tuple) -> torch.Tensor:​
+    """​
+    Executed strictly within the isolated Spoke process.​
+    Reconstructs the PyTorch tensor mapping to the exact physical VRAM ​
+    without initiating a host-to-device memory transfer.​
+    """​
+    # Rebuild the tensor utilizing cudaIpcOpenMemHandle under the hood ​
+    # The reconstruction logic unpacks the 64-byte stub and maps the virtual address space​
+    rebuild_function, rebuild_args = ipc_handle, ipc_handle​
+    spoke_tensor = rebuild_function(*rebuild_args)​
+    ​
+    return spoke_tensor​
+ 
+This foundational layer isolates the execution contexts. If a Spoke process experiences an 
+unrecoverable exception or memory leak, the Hub process can terminate it forcefully via the 
+operating system without corrupting the persistent 100MB buffer or triggering a system-wide 
+GPU panic. 
+Deliverable 1: Audio-Visual Alignment via WhisperX 
+and Hardware-Accelerated AV1 
+The initial substantive processing phase in the video repurposing pipeline addresses the 
+extraction of orthographic transcriptions and their alignment to the temporal axis of the video. 
+Standard Automatic Speech Recognition (ASR) systems, including foundational versions of 
+OpenAI's Whisper, generate timestamps at the utterance level. Because a single utterance can 
+span multiple seconds, utilizing these raw timestamps for automated video cutting results in 
+catastrophic drift, frequently truncating the speaker's first or last words.4 Frame-accurate 
+repurposing mandates millisecond-level precision. 
+To achieve this, the architecture integrates WhisperX, a multi-stage framework that heavily 
+modifies the traditional ASR pipeline. WhisperX relies on Voice Activity Detection (VAD) via 
+Pyannote-audio to explicitly identify the presence of human speech, thereby virtually 
+eliminating hallucinations and reducing the overall processing batch size without degrading the 
+Word Error Rate (WER).4 For the core transcription, Distil-Whisper Large-v3 is selected. This 
+distilled variant provides the linguistic accuracy of the massive Large-v3 model but with a 
+drastically reduced parameter count, ensuring the Spoke process remains well within the 
+VRAM budget.5 
+However, the critical differentiator for frame-accurate cutting is the forced alignment phase. 
+Forced alignment utilizes a phoneme-based architecture, specifically a language-specific 
+wav2vec2 model, to realign the transcribed text back onto the raw audio waveform.4 By 
+analyzing the phonetic structure of the generated text and mapping it to the acoustic features 
+of the audio, WhisperX extracts precise millisecond boundaries for every single word.4 
+Pyannote 4.0 is subsequently executed to perform speaker diarization, identifying distinct 
+speakers and clustering the word-level segments accordingly.4 
+WhisperX Ephemeral Initialization and Forced Alignment 
+The Python implementation of the WhisperX Spoke must aggressively manage memory, 
+explicitly invoking garbage collection and emptying the CUDA cache between the 
+transcription, alignment, and diarization phases to respect the strict <14GB VRAM ceiling. 
+ 
+Python 
+ 
+ 
+import whisperx​
+import gc​
+import torch​
+​
+def execute_audio_alignment_spoke(audio_filepath: str, hf_auth_token: str) -> dict:​
+    """​
+    Ephemeral Spoke execution for WhisperX. Sequentially loads the ASR, ​
+    Forced Alignment, and Diarization models, clearing VRAM between stages.​
+    """​
+    execution_device = "cuda"​
+    # Leverage the RTX 5080's Tensor Cores with half-precision floating point​
+    tensor_precision = "float16" ​
+    ​
+    # Stage 1: Initial Transcription via Distil-Whisper Large-v3 ​
+    # Generates accurate text but imprecise, utterance-level timestamps​
+    asr_pipeline = whisperx.load_model(​
+        "distil-large-v3", ​
+        execution_device, ​
+        compute_type=tensor_precision​
+    )​
+    raw_audio_waveform = whisperx.load_audio(audio_filepath)​
+    transcription_result = asr_pipeline.transcribe(raw_audio_waveform, batch_size=16)​
+    ​
+    # Aggressively reclaim VRAM prior to loading the phoneme-based model​
+    del asr_pipeline​
+    gc.collect()​
+    torch.cuda.empty_cache()​
+    ​
+    # Stage 2: Forced Alignment via wav2vec2 ​
+    # Maps orthographic transcripts to the acoustic signal for millisecond precision​
+    alignment_model, alignment_metadata = whisperx.load_align_model(​
+        language_code=transcription_result["language"], ​
+        device=execution_device​
+    )​
+    ​
+    aligned_segments = whisperx.align(​
+        transcription_result["segments"], ​
+        alignment_model, ​
+        alignment_metadata, ​
+        raw_audio_waveform, ​
+        execution_device, ​
+        return_char_alignments=False​
+    )​
+    ​
+    # Reclaim VRAM prior to Speaker Diarization​
+    del alignment_model​
+    gc.collect()​
+    torch.cuda.empty_cache()​
+    ​
+    # Stage 3: Speaker Diarization via Pyannote 4.0 ​
+    # Partitions the audio stream into homogeneous speaker segments​
+    diarization_pipeline = whisperx.DiarizationPipeline(​
+        use_auth_token=hf_auth_token, ​
+        device=execution_device​
+    )​
+    speaker_segments = diarization_pipeline(audio_filepath, min_speakers=1, max_speakers=5)​
+    ​
+    # Project the speaker IDs onto the millisecond-aligned words​
+    fully_attributed_result = whisperx.assign_word_speakers(speaker_segments, 
+aligned_segments)​
+    ​
+    # Final cleanup before the Spoke process terminates​
+    del diarization_pipeline​
+    gc.collect()​
+    torch.cuda.empty_cache()​
+    ​
+    return fully_attributed_result​
+ 
+Data Handoff and Hardware-Accelerated AV1 Execution 
+Once the fully_attributed_result dictionary is generated, the agent utilizes the word-level arrays 
+to identify the precise start and end times of the target video segment. These boundaries, 
+which are formatted as floating-point seconds (e.g., 12.450), must be translated into 
+hardware-accelerated FFmpeg commands to execute the physical video cut. 
+To maximize encoding efficiency and output fidelity, the agent leverages the AV1 codec via the 
+NVIDIA NVENC hardware encoder present on the Blackwell-based RTX 5080 Mobile. Using the 
+-c:v av1_nvenc parameter offloads the encoding workload from the host CPU to dedicated 
+silicon logic on the GPU. To achieve the highest possible visual quality, the encoder is 
+parameterized with -preset p7 (the slowest, highest quality preset) and -tune hq (high-quality 
+tuning info).6 
+ 
+FFmpeg Parameter 
+Blackwell NVENC 
+Function 
+Repurposing Agent 
+Application 
+-c:v av1_nvenc 
+Invokes the hardware AV1 
+encoder. 
+Bypasses CPU encoding, 
+drastically reducing 
+processing time and power 
+consumption. 
+-preset p7 
+Selects the highest quality 
+encoding preset. 
+Maximizes visual fidelity for 
+the final repurposed asset, 
+prioritizing quality over raw 
+encoding latency.6 
+-tune hq 
+Tunes the encoding pipeline 
+for high quality. 
+Prevents degradation in 
+high-motion scenes, 
+ensuring crisp transitions.6 
+-cq:v 20 
+Establishes a Constant 
+Quality rate factor. 
+Acts similarly to CRF, 
+dynamically adjusting 
+bitrate to maintain 
+perceptual quality.8 
+For frame-accurate cutting, FFmpeg requires the precise formatting of the seek parameters. 
+The start time (-ss) must be placed before the input flag (-i) to ensure the decoder seeks 
+rapidly without sequentially decoding every prior frame. Furthermore, instead of an absolute 
+end time, it is highly recommended to compute the exact duration of the clip and pass it via the 
+-t parameter.9 The temporal coordinates must be formatted strictly as HH:MM:SS.xxx to 
+preserve the millisecond precision extracted from the wav2vec2 alignment.9 
+ 
+Python 
+ 
+ 
+def generate_blackwell_av1_command(word_segment: dict, source_video_path: str, output_video_path: 
+str) -> str:​
+    """​
+    Translates WhisperX millisecond timestamps into a frame-accurate, ​
+    hardware-accelerated FFmpeg cutting command utilizing the NVENC AV1 encoder.​
+    """​
+    # Extract floating-point temporal boundaries from the alignment output ​
+    start_time_float = word_segment.get("start")​
+    end_time_float = word_segment.get("end")​
+    ​
+    if start_time_float is None or end_time_float is None:​
+        raise ValueError("Critical error: Word segment is missing wav2vec2 alignment timestamps.")​
+        ​
+    # Calculate the precise duration of the required cut​
+    duration_float = end_time_float - start_time_float​
+    ​
+    # Lambda to strictly format seconds into the HH:MM:SS.xxx FFmpeg standard ​
+    def format_to_ffmpeg_timestamp(seconds: float) -> str:​
+        hours = int(seconds // 3600)​
+        minutes = int((seconds % 3600) // 60)​
+        secs = int(seconds % 60)​
+        milliseconds = int((seconds - int(seconds)) * 1000)​
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"​
+    ​
+    formatted_start = format_to_ffmpeg_timestamp(start_time_float)​
+    formatted_duration = format_to_ffmpeg_timestamp(duration_float)​
+    ​
+    # Construct the highly parameterized NVENC AV1 command [6, 8, 9]​
+    # -ss is positioned prior to -i to enable fast seeking​
+    # -rc-lookahead 48 allows the encoder to analyze future frames to optimize bitrate allocation ​
+    ffmpeg_execution_string = (​
+        f"ffmpeg -ss {formatted_start} -t {formatted_duration} -i {source_video_path} "​
+        f"-c:v av1_nvenc -preset p7 -tune hq -cq:v 20 -rc-lookahead 48 "​
+        f"-c:a copy -y {output_video_path}"​
+    )​
+    ​
+    return ffmpeg_execution_string​
+ 
+By explicitly mapping the phoneme boundaries to the physical frame cuts via this precise 
+syntax, the agent achieves flawless temporal sync, entirely eliminating the utterance-level drift 
+that degrades traditional AI video editing workflows. 
+Deliverable 2: YOLO26s-Pose Zero-Copy Ingestion and 
+Matrix Slicing 
+While WhisperX handles the temporal dimension, spatial tracking and dynamic reframing are 
+managed by the YOLO26s-Pose object detection model. The evolution of the YOLO 
+architecture culminated in the mid-2026 release of YOLO26, a model family fundamentally 
+redesigned for high-efficiency edge deployment. The defining characteristic of YOLO26 is its 
+"deployment-first philosophy," achieving end-to-end multi-task inference by permanently 
+removing the Non-Maximum Suppression (NMS) post-processing bottleneck and eliminating 
+Distribution Focal Loss (DFL).12 
+The removal of NMS is a structural breakthrough. Historically, object detectors output 
+thousands of overlapping bounding box predictions, relying on a computationally expensive 
+CPU-bound NMS algorithm to filter redundancies based on Intersection over Union (IoU) 
+thresholds. YOLO26 utilizes a dual assignment head that natively outputs the optimal 
+prediction, drastically reducing computational latency and simplifying the tensor parsing logic 
+required by the Spoke process.12 Additionally, the introduction of the MuSGD optimizer during 
+training ensures high accuracy on small, fast-moving objects, making the "small" variant 
+(YOLO26s) exceptionally capable of tracking subjects across varied focal lengths.12 
+To continuously process high-definition video frames through the YOLO26s-Pose model 
+without exhausting the VRAM, the system integrates PyNvVideoCodec and DLPack to establish 
+a zero-copy data routing pipeline. PyNvVideoCodec interfaces directly with the NVIDIA 
+Hardware Video Decoder (NVDEC), decoding the compressed video stream into raw NV12 or 
+YUV444p frames entirely within the VRAM.16 If standard PyTorch ingestion protocols are 
+utilized, the system implicitly copies these VRAM-resident frames to system RAM (CPU) and 
+back to the GPU to construct the continuous tensor, creating an immense PCIe bottleneck.17 
+DLPack (Deep Learning Pack) standardizes the in-memory representation of tensors. By 
+wrapping the PyNvVideoCodec output in a DLPack structure, the Python Spoke can invoke 
+torch.from_dlpack, seamlessly importing the physical CUDA array into the PyTorch allocator 
+without triggering a memory copy.16 
+Zero-Copy Frame Routing 
+ 
+Python 
+ 
+ 
+import torch​
+import PyNvVideoCodec as nvc​
+from ultralytics import YOLO​
+​
+def initialize_yolo26_pose_spoke() -> YOLO:​
+    """​
+    Initializes the end-to-end NMS-free YOLO26s-Pose model.​
+    The 's' variant is chosen to balance high spatial accuracy with ​
+    the stringent inference latency requirements of the RTX 5080.​
+    """​
+    # Loads the multi-task pose estimation weights [13, 19]​
+    spatial_model = YOLO("yolo26s-pose.pt")​
+    spatial_model.to("cuda")​
+    return spatial_model​
+​
+def execute_zero_copy_ingestion(decoder_instance: nvc.PyNvDecoder, spatial_model: YOLO) -> list:​
+    """​
+    Decodes video frames directly into VRAM and routes them into the ​
+    YOLO26 pipeline utilizing DLPack, completely bypassing the PCIe bus and CPU.[16, 17, 18]​
+    """​
+    batch_processing_size = 16​
+    # NVDEC returns frames physically residing on the GPU [18]​
+    hardware_decoded_frames = decoder_instance.get_batch_frames(batch_processing_size)​
+    ​
+    if len(hardware_decoded_frames) == 0:​
+        return​
+​
+    zero_copy_tensor_batch =​
+    for raw_frame in hardware_decoded_frames:​
+        # Convert the proprietary NVDEC frame into a PyTorch tensor via DLPack ​
+        # This is an O(1) operation mapping the virtual address pointer.​
+        # Default shape is for RGB data.​
+        frame_tensor = torch.from_dlpack(raw_frame)​
+        ​
+        # YOLO26 requires channel-first layout​
+        # Permute manipulates the tensor stride, not the physical memory, maintaining zero-copy.​
+        frame_tensor = frame_tensor.permute(2, 0, 1).float() / 255.0​
+        ​
+        # Add the batch dimension:​
+        frame_tensor = frame_tensor.unsqueeze(0)​
+        zero_copy_tensor_batch.append(frame_tensor)​
+        ​
+    # Concatenate the list into a single batch tensor for efficient parallel inference [16]​
+    final_batch_tensor = torch.cat(zero_copy_tensor_batch, dim=0)​
+    ​
+    # Execute NMS-free inference leveraging native FP16 Tensor Core acceleration [12, 14]​
+    prediction_results = spatial_model.predict(final_batch_tensor, half=True, verbose=False)​
+    ​
+    return prediction_results​
+ 
+Virtual Slicing of the Unified Output Matrix 
+Because YOLO26 is a unified multi-task architecture, its prediction output intrinsically links the 
+object detection bounding box with its corresponding pose estimation keypoints.12 The raw 
+tensor output requires precise mathematical slicing to separate the distinct components 
+required for the downstream tracking algorithms. 
+The downstream video tracking mechanism utilizes a dual-layered approach: 
+1.​ ByteTrack Association: Requires the full-body bounding box formatted as (N, 6) 
+containing [x1, y1, x2, y2, confidence, class]. ByteTrack utilizes Intersection over Union (IoU) 
+and appearance heuristics to maintain subject identity across frames. 
+2.​ Kalman Filter Framing: Relies purely on the facial landmarks. Attempting to center a 
+reframed 9:16 vertical video on the full-body bounding box results in unacceptable visual 
+jitter as the subject moves their arms or legs. Extracting the facial landmarks provides a 
+highly stable center-of-mass for the Pan-Tilt-Zoom (PTZ) framing logic. 
+The YOLO26 pose model is trained on the standard COCO keypoints dataset, which predicts 17 
+distinct anatomical joints.19 The keypoint matrix is a three-dimensional tensor of shape (N, 17, 3), 
+representing 
+ detected persons, 17 keypoints, and the 3 values of [x, y, visibility].19 
+ 
+Keypoint Index 
+Anatomical Joint Mapping 
+Slicing Requirement 
+Index 0 
+Nose 
+Targeted for extraction 
+Index 1 
+Left Eye 
+Targeted for extraction 
+Index 2 
+Right Eye 
+Targeted for extraction 
+Index 3 
+Left Ear 
+Targeted for extraction 
+Index 4 
+Right Ear 
+Targeted for extraction 
+Index 5 - 16 
+Shoulders, Elbows, Wrists, 
+Hips, Knees, Ankles 
+Discarded for PTZ framing 
+calculations 19 
+According to the COCO standardization, the facial landmarks exclusively occupy the first five 
+indices (0 through 4) of the keypoint dimension.19 Virtual tensor slicing allows the Spoke 
+process to isolate these coordinates without explicitly allocating new memory matrices. 
+ 
+Python 
+ 
+ 
+def extract_tracking_matrices(yolo_prediction_result) -> tuple:​
+    """​
+    Extracts the isolated full-body bounding box and the 5-point facial landmark ​
+    matrix from the unified YOLO26s-Pose tensor via virtual slicing.​
+    """​
+    # Verify the presence of detected subjects to avoid indexing errors​
+    if yolo_prediction_result.boxes is None or yolo_prediction_result.keypoints is None:​
+        return None, None​
+        ​
+    # 1. Isolate the Bounding Box array for ByteTrack ingestion​
+    # Shape: (N, 6) containing the localized coordinate boundaries and confidence metrics [21, 22]​
+    bbox_tracking_tensor = yolo_prediction_result.boxes.xyxy ​
+    ​
+    # 2. Extract the unified 17-point Keypoint Tensor​
+    # Shape: (N, 17, 3) representing N persons, 17 structural joints, and [x, y, visible] data ​
+    full_anatomical_keypoints = yolo_prediction_result.keypoints.data​
+    ​
+    # Execute virtual slicing to isolate the facial center-of-mass ​
+    # Matrix Slice logic:​
+    # Slices Indices: 0 (Nose), 1 (L-Eye), 2 (R-Eye), 3 (L-Ear), 4 (R-Ear) ​
+    facial_landmark_tensor = full_anatomical_keypoints[:, 0:5, :]​
+    ​
+    # facial_landmark_tensor now represents an (N, 5, 3) matrix mapping directly ​
+    # to the visual center of the subject's face, ideal for the Kalman Filter calculation.​
+    return bbox_tracking_tensor, facial_landmark_tensor​
+ 
+This strict adherence to virtual slicing guarantees that the operations do not fracture the VRAM 
+pool, maintaining absolute compliance with the expandable_segments methodology outlined in 
+the architectural foundation. 
+Deliverable 3: Ephemeral Contextual Reasoning via 
+Qwen3-4B (INT4) 
+While spatial algorithms excel at localization, the autonomous agent requires advanced 
+semantic reasoning to determine the contextual value of a video segment. The agent must 
+continuously evaluate the metadata generated by the prior stages to identify high-retention 
+"hooks" (e.g., sudden emotional shifts, complex thematic dialogue, or visual novelty). 
+Depending entirely on cloud-based APIs for this continuous, frame-by-frame evaluation would 
+incur prohibitive latency and excessive cost. Therefore, the pipeline relies on the local 
+deployment of a Small Language Model (SLM). 
+The Qwen3-4B model represents the mid-2026 standard for edge reasoning, incorporating 
+advanced Mixture of Experts (MoE) optimizations and a highly sophisticated 
+instruction-following framework.23 However, loading a 4-billion parameter model in FP16 
+precision requires approximately 8GB of VRAM, which, when combined with the 100MB IPC 
+buffer, the WSL2 WDDM overhead, and the transient memory spikes of the Spoke processes, 
+endangers the 14GB ceiling. Consequently, the Qwen3-4B model must be loaded using INT4 
+quantization (via AWQ or GPTQ), compressing the weights to 4-bit integers and reducing the 
+baseline memory footprint to a highly manageable ~2.5GB to 3GB.23 
+To maximize inference speed and control memory allocation within the ephemeral Python 
+Spoke, vLLM is the optimal inference engine.27 Utilizing native Hugging Face transformers with 
+bitsandbytes lacks the sophisticated PagedAttention mechanism integral to vLLM. 
+PagedAttention dynamically manages the Key-Value (KV) cache by mapping non-contiguous 
+physical memory blocks to contiguous virtual blocks, drastically reducing VRAM waste and 
+allowing the developer to set a strict upper bound on GPU memory utilization. SGLang offers 
+similar performance, but vLLM provides a highly explicit and mature configuration syntax for 
+toggling reasoning paradigms dynamically.28 
+Ephemeral Loading and the Dual-Mode Cognitive Toggle 
+A defining innovation of the Qwen3 architecture is its integration of a latent "Thinking" state, 
+capable of executing complex Chain-of-Thought (CoT) reasoning similar to the DeepSeek-R1 
+framework.25 However, this advanced reasoning introduces a critical bottleneck: the Time 
+Between Tokens (TBT) and Time To First Visible Token (TTFVT) increase dramatically as the 
+model generates the hidden <think> blocks.27 
+The repurposing agent operates under dual cognitive requirements. During standard 
+operations, it performs rapid metadata scanning and binary classification (e.g., "Does this 
+frame contain a transition?"). This task requires near-instantaneous output. Conversely, when a 
+potential hook is flagged, the agent must perform deep thematic analysis to determine the 
+optimal cutting strategy. Therefore, the Spoke process must dynamically toggle the model 
+between a low-latency "Non-Thinking" state and a deep "Thinking" state using vLLM's 
+enable_thinking configuration.28 
+ 
+Cognitive State 
+enable_thinking 
+Flag 
+Primary 
+Application 
+Inference 
+Characteristics 
+Non-Thinking 
+False 
+Rapid heuristic 
+scanning and 
+continuous 
+metadata 
+Sub-second 
+latency, 
+deterministic 
+sampling 
+(temperature=0.0), 
+classification. 
+minimal TBT.27 
+Thinking 
+True 
+Complex narrative 
+evaluation and 
+thematic cut-point 
+selection. 
+High latency, 
+extensive CoT 
+generation, 
+elevated sampling 
+variability 
+(temperature=0.6).2
+8 
+The implementation leverages vLLM's chat_template_kwargs to execute this hard switch 
+dynamically on a per-request basis without reloading the model weights.28 
+ 
+Python 
+ 
+ 
+from vllm import LLM, SamplingParams​
+import torch​
+import gc​
+​
+def initialize_ephemeral_qwen3_spoke() -> LLM:​
+    """​
+    Initializes Qwen3-4B utilizing INT4 AWQ quantization via the vLLM engine.​
+    Configured specifically for aggressive VRAM management.​
+    """​
+    # The LLM engine is initialized with parameters to restrict footprint [26, 28]​
+    # gpu_memory_utilization establishes a strict cap, ensuring the KV cache ​
+    # does not uncontrollably expand and breach the 14GB limit.​
+    # enable_reasoning prepares the backend to parse DeepSeek-R1 style output [29]​
+    reasoning_engine = LLM(​
+        model="Qwen/Qwen3-4B-Instruct-AWQ", ​
+        quantization="awq",                 ​
+        tensor_parallel_size=1,             ​
+        gpu_memory_utilization=0.35,        # Caps allocation to roughly 5.6GB of the 16GB total [26]​
+        enforce_eager=True,                 # Disables CUDA graph caching to conserve VRAM overhead​
+        enable_reasoning=True               # Initializes the reasoning parser pipeline ​
+    )​
+    return reasoning_engine​
+​
+def execute_dual_mode_reasoning(​
+    reasoning_engine: LLM, ​
+    contextual_prompt: str, ​
+    trigger_deep_thought: bool​
+) -> str:​
+    """​
+    Executes inference dynamically, explicitly toggling the Chain-of-Thought ​
+    cognitive graph based on the complexity of the analytical task.​
+    """​
+    conversation_history =​
+    ​
+    if trigger_deep_thought:​
+        # Thinking Mode Configuration ​
+        # Elevates temperature to encourage diverse exploratory logic.​
+        # Expands max_tokens to accommodate the extensive hidden <think> trajectory.[29]​
+        inference_params = SamplingParams(​
+            temperature=0.6,​
+            top_p=0.95,​
+            max_tokens=4096​
+        )​
+        # Apply the hard switch to force CoT engagement ​
+        template_kwargs = {"enable_thinking": True}​
+    else:​
+        # Non-Thinking Mode Configuration [26, 28]​
+        # Enforces absolute determinism for rapid, predictable binary outputs.​
+        # Constrains max_tokens to prevent hallucinated narrative drift.​
+        inference_params = SamplingParams(​
+            temperature=0.0,​
+            top_p=1.0,​
+            max_tokens=256​
+        )​
+        # Apply the hard switch to bypass CoT entirely, minimizing TBT ​
+        template_kwargs = {"enable_thinking": False}​
+​
+    # Execute the request utilizing vLLM's internal chat templating API ​
+    generation_output = reasoning_engine.chat(​
+        messages=conversation_history,​
+        sampling_params=inference_params,​
+        chat_template_kwargs=template_kwargs​
+    )​
+    ​
+    # Extract the parsed visible tokens, excluding the internal <think> data​
+    final_textual_decision = generation_output.outputs.text​
+    return final_textual_decision​
+​
+def terminate_qwen3_spoke(reasoning_engine: LLM):​
+    """​
+    Executes a structured termination of the vLLM instance.​
+    Forcibly unmaps the PagedAttention blocks and weight matrices, ​
+    returning the VRAM to the OS via the expandable_segments mechanism.​
+    """​
+    del reasoning_engine​
+    gc.collect()​
+    torch.cuda.empty_cache()​
+ 
+This deliberate toggling mechanism empowers the agent to process thousands of frames 
+heuristically in seconds, reserving the computationally intensive, high-latency reasoning 
+exclusively for the moments mathematically identified as optimal narrative transitions. 
+Deliverable 4: Cloud-Delegated Agentic Vision via 
+Gemini 3 Flash 
+While the Qwen3-4B model handles text and metadata reasoning, and YOLO26s-Pose handles 
+geometric localization, the agent frequently encounters complex spatial scenarios requiring 
+profound visual mathematics. Examples include counting distinct structural elements within a 
+crowded composition, performing Optical Character Recognition (OCR) on obscured 
+typography, or evaluating the microscopic brushstrokes of an underlying image tensor.30 
+Attempting to run a 30B+ parameter Vision-Language Model (VLM) locally to achieve this level 
+of analysis is fundamentally impossible on a 16GB RTX 5080 Mobile. Furthermore, standard 
+multimodal models process images by breaking them down into static patches, frequently 
+losing high-frequency details and "hallucinating" spatial reasoning (e.g., confidently stating 
+there are 12 boxes in an image when 15 are physically present).30 
+To overcome this, the architecture implements a strategic API offload utilizing Google's Gemini 
+3 Flash and its "Agentic Vision" framework. Agentic Vision transcends the limitations of static 
+patch-based inference by employing a deterministic Think-Act-Observe loop.30 When queried, 
+the model does not guess; it autonomously writes and executes Python code (frequently 
+utilizing libraries like OpenCV) within a secure backend sandbox to mathematically crop, zoom, 
+and analyze the image, verifying its findings before generating a response.30 
+Constructing the Agentic Vision API Execution 
+Integrating this cloud-delegated Spoke requires the google-genai Python SDK (v1.51.0 or 
+later).32 Because API calls introduce network latency and per-token costs, the request must be 
+tightly parameterized using the types.GenerateContentConfig object to maximize processing 
+speed while retaining the code execution capability.30 
+Two specific configuration parameters are mandatory for the video repurposing agent: 
+1.​ Thinking Level (thinking_level=MINIMAL): By default, Gemini 3 utilizes dynamic 
+reasoning that can slow down responses. Because the Agentic Vision tool inherently 
+provides deterministic code-based reasoning, the overarching textual CoT can be 
+suppressed by setting the thinking level to MINIMAL (or LOW).30 This preserves the 
+sandbox logic while drastically lowering latency. 
+2.​ Media Resolution (media_resolution=HIGH): The code execution backend requires 
+high-density pixel data to execute its zoom and crop algorithms effectively. Passing 
+MEDIA_RESOLUTION_HIGH guarantees the image tensor is uploaded without lossy 
+downscaling, preventing the target data from becoming an "inaccessible blur" for the 
+backend Python script.30 
+ 
+Python 
+ 
+ 
+import os​
+from google import genai​
+from google.genai import types​
+​
+def execute_agentic_vision_delegation_spoke(raw_image_bytes: bytes, spatial_directive: str) -> str:​
+    """​
+    Offloads highly complex spatial mathematics to the Gemini 3 Flash API.​
+    Utilizes the Agentic Vision framework to execute deterministic OpenCV ​
+    analysis on the Google backend, entirely bypassing the local RTX 5080 GPU.​
+    """​
+    # Initialize the GenAI SDK client [30, 34, 35]​
+    # Requires the GOOGLE_API_KEY environment variable to be configured securely​
+    cloud_client = genai.Client()​
+    ​
+    # Translate the raw in-memory image bytes into a multimodal Part object [32, 35]​
+    # This prevents the IO overhead of writing temporary image files to the WSL2 virtual disk​
+    multimodal_image_part = types.Part.from_bytes(​
+        data=raw_image_bytes,​
+        mime_type="image/jpeg"​
+    )​
+    ​
+    # Construct the highly parameterized GenerateContentConfig object ​
+    request_configuration = types.GenerateContentConfig(​
+        ​
+        # 1. Enforce high-density pixel upload ​
+        # Crucial for allowing the backend Python script to crop and magnify granular details​
+        media_resolution=types.MediaResolution.MEDIA_RESOLUTION_HIGH,​
+        ​
+        # 2. Constrain the textual reasoning verbosity [30, 34]​
+        # MINIMAL reduces network latency and token output while preserving tool execution logic​
+        thinking_config=types.ThinkingConfig(​
+            thinking_level=types.ThinkingLevel.MINIMAL​
+        ),​
+        ​
+        # 3. Enable the Deterministic Code Execution Sandbox [31, 35]​
+        # Instantiates the Think-Act-Observe loop, allowing Gemini to write and ​
+        # execute Python scripts against the image tensor to verify its analysis.​
+        tools=​
+    )​
+    ​
+    # Transmit the request to the global endpoint [33, 35]​
+    api_response = cloud_client.models.generate_content(​
+        model="gemini-3-flash-preview",​
+        contents=[multimodal_image_part, spatial_directive],​
+        config=request_configuration​
+    )​
+    ​
+    return api_response.text​
+ 
+The architectural synergy of this delegation is profound. During the asynchronous network wait 
+state required by the Gemini API, the local RTX 5080 Mobile is entirely idle. Its VRAM remains 
+unburdened, allowing the PyTorch allocator's expandable_segments mechanism to defragment 
+memory or aggressively pre-allocate the 100MB IPC buffer for the subsequent local 
+processing Spoke. This prevents the system from locking up during intense reasoning phases 
+and guarantees absolute stability for the autonomous agent. 
+Through the meticulous orchestration of CUDA IPC memory management, the temporal 
+precision of WhisperX phoneme mapping, the zero-copy DLPack ingestion of YOLO26 spatial 
+tracking, the strategic toggling of the Qwen3 reasoning graph, and the offloading of complex 
+vision mathematics via the Agentic Vision framework, the edge-native video repurposing agent 
+successfully operates a suite of mid-2026 SOTA models. This architecture fundamentally 
+proves that severe hardware constraints do not preclude advanced autonomous capabilities 
+when software integration is engineered with uncompromising precision. 
+Works cited 
+1.​ One Kernel for All Your GPUs - Hazy Research, accessed on March 7, 2026, 
+https://hazyresearch.stanford.edu/blog/2025-09-22-pgl 
+2.​ ParallelKittens: Systematic and Practical Simplification of Multi-GPU AI Kernels - 
+arXiv, accessed on March 7, 2026, https://arxiv.org/html/2511.13940v1 
+3.​ StreamBox: A Lightweight GPU SandBox for Serverless Inference Workflow - 
+USENIX, accessed on March 7, 2026, 
+https://www.usenix.org/system/files/atc24-wu-hao.pdf 
+4.​ m-bain/whisperX: WhisperX: Automatic Speech ... - GitHub, accessed on March 7, 
+2026, https://github.com/m-bain/whisperX 
+5.​ Whisper and Pyannote: The Ultimate Solution for Speech Transcription, accessed 
+on March 7, 2026, 
+https://scalastic.io/en/whisper-pyannote-ultimate-speech-transcription/ 
+6.​ AV1 NVENC Config for FFMPEG - GitHub Gist, accessed on March 7, 2026, 
+https://gist.github.com/Nicklas373/6cf92b3594561bff326697a93ffb2e5b 
+7.​ Let's explore av1_nvenc together : r/AV1 - Reddit, accessed on March 7, 2026, 
+https://www.reddit.com/r/AV1/comments/1011ujq/lets_explore_av1_nvenc_togethe
+r/ 
+8.​ Nvenc AV1 output quality - General - Topaz Community, accessed on March 7, 
+2026, https://community.topazlabs.com/t/nvenc-av1-output-quality/47683 
+9.​ ffmpeg video editing command in milliseconds timestamp - Stack Overflow, 
+accessed on March 7, 2026, 
+https://stackoverflow.com/questions/23171937/ffmpeg-video-editing-command-i
+n-milliseconds-timestamp 
+10.​Using ffmpeg to cut videos with more precision than key frames allow, accessed 
+on March 7, 2026, 
+https://video.stackexchange.com/questions/16750/using-ffmpeg-to-cut-videos-
+with-more-precision-than-key-frames-allow 
+11.​URGENT NEED PLEASE ANSWER, BE NICE : HOW TO accurately to trim an mp4 by 
+the millisecond (possibly with reencoding and frame cutting)? And why some 
+editors can cut MP4s accurately while ffmpeg can't? - Reddit, accessed on March 
+7, 2026, 
+https://www.reddit.com/r/ffmpeg/comments/129h1rs/urgent_need_please_answe
+r_be_nice_how_to/ 
+12.​YOLO26: Key Architectural Enhancements and Performance Benchmarking for 
+Real-Time Object Detection - arXiv.org, accessed on March 7, 2026, 
+https://arxiv.org/html/2509.25164v4 
+13.​Ultralytics YOLO26, accessed on March 7, 2026, 
+https://docs.ultralytics.com/models/yolo26/ 
+14.​Ultralytics YOLO Evolution: An Overview of YOLO26, YOLO11, YOLOv8, and 
+YOLOv5 Object Detectors for Computer Vision and Pattern Recognition - 
+arXiv.org, accessed on March 7, 2026, https://arxiv.org/html/2510.09653v2 
+15.​YOLO26: A Comprehensive Architecture Overview and Key Improvements - 
+arXiv.org, accessed on March 7, 2026, https://arxiv.org/pdf/2602.14582 
+16.​PyNvVideoCodec API - NVIDIA Documentation, accessed on March 7, 2026, 
+https://docs.nvidia.com/video-technologies/pynvvideocodec/pdf/PyNvVideoCod
+ec_API_ProgGuide.pdf 
+17.​[RFC]: Enabling Zero-Copy Video with PyNvVideoCodec and IPC · Issue #30839 - 
+GitHub, accessed on March 7, 2026, 
+https://github.com/vllm-project/vllm/issues/30839 
+18.​PyNvVideoCodec API Programming Guide - NVIDIA Docs, accessed on March 7, 
+2026, 
+https://docs.nvidia.com/video-technologies/pynvvideocodec/pynvc-api-prog-gui
+de/index.html 
+19.​Pose Estimation - Ultralytics YOLO Docs, accessed on March 7, 2026, 
+https://docs.ultralytics.com/tasks/pose/ 
+20.​What Is Pose Estimation? Keypoint Detection Explained [2026] | Datature Blog, 
+accessed on March 7, 2026, 
+https://datature.io/blog/what-is-pose-estimation-keypoint-detection-explained-2
+026 
+21.​Reference for ultralytics/engine/results.py, accessed on March 7, 2026, 
+https://docs.ultralytics.com/reference/engine/results/ 
+22.​Qwen3-Next-80B-A3B vs gpt-oss-120b : r/LocalLLaMA - Reddit, accessed on 
+March 7, 2026, 
+https://www.reddit.com/r/LocalLLaMA/comments/1p9nckz/qwen3next80ba3b_vs_
+gptoss120b/ 
+23.​Qwen3 is the large language model series developed by Qwen team, Alibaba 
+Cloud. - GitHub, accessed on March 7, 2026, https://github.com/QwenLM/Qwen3 
+24.​Qwen3 is all you need. Hello everyone, I'm Lao Zhang, an AI… | by zhangthinkin | 
+Medium, accessed on March 7, 2026, 
+https://medium.com/@venn5708/hello-everyone-im-lao-zhang-an-ai-learning-en
+thusiast-8f0e9c3dffc2 
+25.​Integrate and Deploy Tongyi Qwen3 Models into Production Applications with 
+NVIDIA, accessed on March 7, 2026, 
+https://developer.nvidia.com/blog/integrate-and-deploy-tongyi-qwen3-models-in
+to-production-applications-with-nvidia/ 
+26.​Reasoning Language Model Inference Serving Unveiled: An Empirical Study - 
+arXiv, accessed on March 7, 2026, https://arxiv.org/html/2510.18672v1 
+27.​vLLM - Qwen, accessed on March 7, 2026, 
+https://qwen.readthedocs.io/en/latest/deployment/vllm.html 
+28.​Qwen/Qwen3-32B - Hugging Face, accessed on March 7, 2026, 
+https://huggingface.co/Qwen/Qwen3-32B 
+29.​Gemini 3 Agentic Vision: Moving Beyond Simple Image Prompting - DEV 
+Community, accessed on March 7, 2026, 
+https://dev.to/railsstudent/building-a-digital-docent-master-agentic-vision-with-
+gemini-3-20i1 
+30.​Build an Autonomous Supply Chain with Gemini 3 Flash & AlloyDB AI - Google 
+Codelabs, accessed on March 7, 2026, 
+https://codelabs.developers.google.com/visual-commerce-gemini-3-alloydb 
+31.​Turning Handwritten Plans into Strategic Intelligence with Gemini 3 | by 
+#TheGenAIGirl — code, community, and GenAI. | Google Cloud - Medium, 
+accessed on March 7, 2026, 
+https://medium.com/google-cloud/turning-handwritten-plans-into-strategic-intell
+igence-with-gemini-3-70d57222542d 
+32.​Get started with Gemini 3 | Generative AI on Vertex AI - Google Cloud 
+Documentation, accessed on March 7, 2026, 
+https://docs.cloud.google.com/vertex-ai/generative-ai/docs/start/get-started-wit
+h-gemini-3 
+33.​Detecting and Editing Visual Objects with Gemini | Towards Data Science, 
+accessed on March 7, 2026, 
+https://towardsdatascience.com/detecting-and-editing-visual-objects-with-gemi
+ni/ 

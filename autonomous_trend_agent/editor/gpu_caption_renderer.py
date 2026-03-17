@@ -12,6 +12,13 @@ Features:
     - Word-by-word animation
     - Multiple caption styles (TikTok, Hormozi, MrBeast, etc.)
     - GPU-resident output (no CPU copy)
+    
+ARCHITECTURE NOTE:
+This module utilizes `skia-python`'s OpenGL context to draw typographic vectors 
+directly into GPU VRAM. This is essential for the `zero_copy_pipeline`, as it allows 
+us to alpha-blend the text (RGBA) over the NVDEC decoded video tensors (RGB) entirely 
+within PyTorch, completely avoiding the PCI-e bus bottleneck of moving frames back 
+to the CPU for PIL rendering.
 """
 
 import logging

@@ -75,9 +75,9 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz && \
 #     --index-url https://download.pytorch.org/whl/nightly/cu128
 
 # =============================================================================
-# 4b. Install NeMo ASR Toolkit (for Parakeet TDT transcription)
+# 4b. NeMo ASR Toolkit — DEPRECATED in v2.0
+#     Parakeet TDT replaced by WhisperX (installed via requirements_docker.txt)
 # =============================================================================
-RUN pip install --no-cache-dir "nemo_toolkit[asr]"
 
 # =============================================================================
 # 5. Install PyNvVideoCodec (Zero-Copy GPU Video Decoder/Encoder) - v2.1.0 required
@@ -105,10 +105,42 @@ COPY requirements_docker.txt .
 RUN pip install --no-cache-dir -r requirements_docker.txt
 
 # =============================================================================
-# 8. Install Playwright Browsers (for Trend Discovery scraping)
+# 7b. Install WhisperX + pyannote-audio (--no-deps to bypass torch/numpy pins)
+#     Both whisperx and pyannote-audio pin torch~=2.8.0, numpy>=2.1.0
+#     but run fine with NGC's torch 2.7.0 and numpy 1.26.4 at runtime.
+#     Their actual runtime deps (ctranslate2, faster-whisper, etc.) are in
+#     requirements_docker.txt.
+# =============================================================================
+RUN pip install --no-cache-dir --no-deps git+https://github.com/m-bain/whisperx.git && \
+    pip install --no-cache-dir --no-deps pyannote-audio
+
+# =============================================================================
+# 8. Install AutoAWQ (needs --no-build-isolation to bind existing PyTorch)
+# =============================================================================
+RUN pip install --no-cache-dir --no-build-isolation autoawq
+
+# =============================================================================
+# 9. Install Playwright Browsers (for Trend Discovery scraping)
 # =============================================================================
 RUN playwright install chromium && \
     playwright install-deps
+
+# =============================================================================
+# 10. Compile vLLM from source for Blackwell (sm_120) with strict ABI override
+#     Bypasses PEP 517 isolation to bind against PyTorch Nightly cu128
+# =============================================================================
+RUN git clone https://github.com/vllm-project/vllm.git && cd vllm && \
+    python use_existing_torch.py && \
+    pip install -r requirements/build.txt && \
+    pip install setuptools_scm && \
+    export CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" && \
+    export CMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" && \
+    export TORCH_CUDA_ARCH_LIST="12.0+PTX" && \
+    export NVCC_GENCODE="-gencode=arch=compute_120,code=sm_120" && \
+    export VLLM_FLASH_ATTN_VERSION=2 && \
+    export MAX_JOBS=6 && export NVCC_THREADS=2 && export CMAKE_BUILD_PARALLEL_LEVEL=6 && \
+    pip install --no-build-isolation -e . -v && \
+    cd .. && rm -rf vllm
 
 # =============================================================================
 # Install fontconfig, system fonts, AND caption-ready bold fonts

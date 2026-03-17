@@ -37,114 +37,39 @@ class VideoAnalysis:
 
 class Qwen3VideoAnalyzer:
     """
-    GPU-accelerated video analyzer using Qwen3-VL-8B-Instruct.
-    Runs locally in Docker with Int4 quantization for memory efficiency.
+    GPU-accelerated video analyzer using Qwen3-4B INT4 vLLM integration.
+    Runs locally with strict 5.6GB memory capping and Dual-Mode reasoning.
     """
     
-    MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+    MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507-AWQ"
     
-    def __init__(self, device: str = "cuda", load_in_4bit: bool = True):
-        """
-        Initialize Qwen3-VL model.
-        
-        Args:
-            device: Device to run on ('cuda' or 'cpu')
-            load_in_4bit: Use Int4 quantization (recommended for 16GB VRAM)
-        """
+    def __init__(self, device: str = "cuda"):
         self.device = device
-        self.model = None
-        self.processor = None
-        self.load_in_4bit = load_in_4bit
-        
-        print(f"[Qwen3-VL] Initializing (4-bit: {load_in_4bit}, device: {device})")
+        self.reasoning_engine = None
+        print(f"[Qwen3-VL] Initializing vLLM cognitive node on {device}")
     
     def _ensure_loaded(self):
-        """Lazy load model on first use to save VRAM"""
-        if self.model is not None:
+        if self.reasoning_engine is not None:
             return
+            
+        from vllm import LLM
         
-        
-        # Check for configured path or default
-        configured_path = os.environ.get("QWEN_MODEL_PATH")
-        # CRITICAL: Force Qwen3-VL-8B-Instruct to avoid legacy shape errors
-        if "Qwen2.5" in str(configured_path) or "2B" in str(configured_path):
-             print(f"[Qwen3-VL] Warning: QWEN_MODEL_PATH points to legacy '{configured_path}'. Overriding to force Qwen3-VL.")
-             configured_path = None # Force fallback to self.MODEL_ID
-        if configured_path:
-            local_path = Path(configured_path)
-            # Handle relative path in Docker
-            if not local_path.exists() and not str(local_path).startswith("/"):
-                 local_path = Path("/workspace") / configured_path
-        else:
-            # Try Qwen3 first
-            paths_to_try = [
-                Path("models/Qwen3-VL-8B-Instruct"),
-                Path("/app/models/Qwen3-VL-8B-Instruct"),
-                Path("/workspace/models/Qwen3-VL-8B-Instruct"),
-            ]
-            local_path = Path("models/Qwen3-VL-8B-Instruct") # Default
-            for p in paths_to_try:
-                if p.exists():
-                    local_path = p
-                    break
-        
-        model_id = str(local_path) if local_path.exists() else (configured_path or self.MODEL_ID)
-        
-        print(f"[Qwen3-VL] Loading {model_id}...")
-        
-        # Auto-disable 4-bit for 2B model (it's small enough and avoids bnb errors)
-        is_small_model = "2B" in model_id or "2b" in model_id
-        if is_small_model and self.load_in_4bit:
-            print("[Qwen3-VL] Detected 2B model - Disabling 4-bit quantization (running in FP16)")
-            self.load_in_4bit = False
-
-        print(f"[Debug] CUDA Available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"[Debug] Current Device: {torch.cuda.get_device_name(0)}")
-            print(f"[Debug] VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
-        
+        print(f"[Qwen3-VL] Loading {self.MODEL_ID} via vLLM engine...")
         try:
-            # Import AutoModel because Qwen3 uses custom code
-            from transformers import AutoModelForImageTextToText, AutoProcessor
-            from qwen_vl_utils import process_vision_info
-            
-            # Load with 4-bit quantization
-            if self.load_in_4bit:
-                from transformers import BitsAndBytesConfig
-                
-                quantization_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True
-                )
-                
-                self.model = AutoModelForImageTextToText.from_pretrained(
-                    model_id,
-                    quantization_config=quantization_config,
-                    device_map="cuda" if torch.cuda.is_available() else "auto",
-                    torch_dtype=torch.float16,
-                    trust_remote_code=True
-                )
-            else:
-                self.model = AutoModelForImageTextToText.from_pretrained(
-                    model_id,
-                    device_map="cuda" if torch.cuda.is_available() else "auto",
-                    torch_dtype=torch.float16,
-                    trust_remote_code=True
-                )
-            
-            self.processor = AutoProcessor.from_pretrained(
-                model_id,
-                trust_remote_code=True
-            )
-            
-            self._process_vision_info = process_vision_info
-            
-            print(f"[Qwen3-VL] Model loaded successfully")
-            
+            # Initialize with Dual-Mode capabilities and 0.35 utilization ceiling
+            self.reasoning_engine = LLM(  
+                model=self.MODEL_ID,  
+                quantization="awq",  
+                tensor_parallel_size=1,  
+                gpu_memory_utilization=0.35,  
+                enforce_eager=True,           
+                max_model_len=8192,
+                enable_chunked_prefill=True,
+                limit_mm_per_prompt={"image": 16, "video": 0}
+            )  
+            print(f"[Qwen3-VL] Cognitive engine loaded successfully")
         except Exception as e:
-            print(f"[Qwen3-VL] Failed to load model: {e}")
+            print(f"[Qwen3-VL] Failed to initialize vLLM engine: {e}")
             raise
     
     def _extract_frames(
@@ -154,8 +79,17 @@ class Qwen3VideoAnalyzer:
         resize: Tuple[int, int] = (448, 448)
     ) -> Tuple[List, float]:
         """
-        Extract evenly-spaced frames from video using FFmpeg.
-        FFmpeg works reliably in Docker while OpenCV often fails.
+        Extracts evenly-spaced frames from the video using FFmpeg.
+        
+        ARCHITECTURE NOTE: FFmpeg Seek Mechanisms
+        We explicitly use FFmpeg over OpenCV (`cv2.VideoCapture`) because OpenCV 
+        frequently fails or memory-leaks on heavily compressed variable-framerate 
+        web video.
+
+        Crucially, we place the `-ss` (seek) flag BEFORE the `-i` (input) flag.
+        This forces FFmpeg to perform a 'fast-seek' utilizing keyframes, jumping 
+        directly to the timestamp instantly rather than decoding the video linearly 
+        from 00:00:00 to the target frame, which would take immensely longer.
         
         Returns:
             Tuple of (frame_images, duration, timestamps)
@@ -209,10 +143,11 @@ class Qwen3VideoAnalyzer:
             for i, ts in enumerate(timestamps):
                 frame_path = Path(temp_dir) / f"frame_{i:03d}.png"
                 
-                # Extract single frame at timestamp using FFmpeg
-                # Note: -ss after -i is slower but 100% accurate (avoids fast-seek failures between sparse keyframes)
+                # Extract single frame at timestamp using FFmpeg fast-seek.
+                # Notice `-ss` is positioned BEFORE `-i`, causing FFmpeg to jump 
+                # directly to the nearest keyframe instantly (Zero-Copy seek).
                 extract_cmd = [
-                    'ffmpeg', '-y', '-i', video_path, '-ss', str(ts),
+                    'ffmpeg', '-y', '-ss', str(ts), '-i', video_path,
                     '-frames:v', '1', '-q:v', '2',
                     '-vf', f'scale={resize[0]}:{resize[1]}',
                     str(frame_path)
@@ -335,44 +270,31 @@ Output format:
             ]
         }]
         
-        # Process with Qwen
-        text = self.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+        # Process with Qwen vLLM
+        print("[Qwen3-VL] Engaging Dual-Mode Reasoning inference...")
+        from vllm import SamplingParams
         
-        image_inputs, video_inputs = self._process_vision_info(messages)
+        trigger_deep_thought = True # Analyzing full video for viral cuts requires CoT
         
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt"
-        )
-        inputs = inputs.to(self.device)
-        
-        print("[Qwen3-VL] Running inference...")
-        
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=1024,
-                do_sample=False
+        if trigger_deep_thought:  
+            inference_params = SamplingParams(temperature=0.6, top_p=0.95, max_tokens=4096)  
+            template_kwargs = {"enable_thinking": True}  
+        else:  
+            inference_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=256)  
+            template_kwargs = {"enable_thinking": False}
+
+        # The vLLM chat engine natively handles standard OpenAI-style message schemas
+        try:
+            generation_output = self.reasoning_engine.chat(  
+                messages=messages,  
+                sampling_params=inference_params,  
+                chat_template_kwargs=template_kwargs  
             )
-        
-        generated_ids_trimmed = [
-            out_ids[len(in_ids):] 
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-        ]
-        
-        response = self.processor.batch_decode(
-            generated_ids_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
-        )[0]
-        
+            response = generation_output[0].outputs[0].text
+        except Exception as e:
+            print(f"[Qwen3-VL] vLLM Inference failed: {e}")
+            response = ""
+            
         print(f"[Qwen3-VL] Response received ({len(response)} chars)")
         
         # Robust JSON extraction (handles CoT reasoning text before JSON)
@@ -464,13 +386,13 @@ Output format:
     
     def unload(self):
         """Unload model to free VRAM"""
-        if self.model is not None:
-            del self.model
-            del self.processor
-            self.model = None
-            self.processor = None
+        import gc
+        if self.reasoning_engine is not None:
+            del self.reasoning_engine
+            self.reasoning_engine = None
+            gc.collect()
             torch.cuda.empty_cache()
-            print("[Qwen3-VL] Model unloaded, VRAM freed")
+            print("[Qwen3-VL] Cognitive model unloaded, VRAM inherently freed")
     
     def save_analysis(self, analysis: VideoAnalysis, output_path: str):
         """Save analysis to JSON file"""

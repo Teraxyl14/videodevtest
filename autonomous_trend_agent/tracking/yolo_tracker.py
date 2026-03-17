@@ -296,51 +296,24 @@ class YOLOv11Tracker:
         
         from ultralytics import YOLO
         
-        # ================================================================
-        # PATH B: Load YOLOv12-Face Nano instead of YOLO26n person detector
-        # Face-specific model from akanametov/yolo-face (WIDER FACE trained)
-        # Searches /app/models/ first (Docker), then bare name, then fallback
-        # ================================================================
-        face_model_basename = f"yolov12{self.model_size}-face.pt"
-        fallback_model_name = f"yolo26{self.model_size}.pt"
+        # Load YOLO26s-Pose natively to INT8 TensorRT configuration fallback
+        model_name = f"yolo26{self.model_size}-pose.pt"
+        print(f"[FaceTracker] Loading single-pass spatial geometry model: {model_name}")
         
-        # Search paths for face model (Docker mount → current dir → Ultralytics cache)
-        import os
-        search_paths = [
-            f"/app/models/{face_model_basename}",
-            face_model_basename,
-        ]
-        
-        face_loaded = False
-        for model_path in search_paths:
-            if os.path.exists(model_path) or model_path == face_model_basename:
-                try:
-                    print(f"[FaceTracker] Trying face model: {model_path}")
-                    self.detection_model = YOLO(model_path)
-                    self.detection_model.to(self.device)
-                    self._is_face_model = True
-                    face_loaded = True
-                    print(f"[FaceTracker] ✅ Face-specific model loaded ({model_path})")
-                    break
-                except Exception as e:
-                    print(f"[FaceTracker] Failed to load '{model_path}': {e}")
-                    continue
-        
-        if not face_loaded:
-            print(f"[FaceTracker] Face model not found, falling back to person detection: {fallback_model_name}")
-            self.detection_model = YOLO(fallback_model_name)
+        try:
+            self.detection_model = YOLO(model_name)
             self.detection_model.to(self.device)
+            # Flag single-pass
             self._is_face_model = False
+            self.enable_pose = True # inherently 
+            # Force half precision 
+            if self.device == 'cuda':
+                self.detection_model.model.half()
+        except Exception as e:
+            print(f"[FaceTracker] Failed to load {model_name}: {e}")
+            raise
         
-        # Load pose model if enabled (for Rule of Thirds eye positioning)
-        # Pose model stays as YOLO26-pose since it provides body keypoints
-        if self.enable_pose:
-            pose_model_name = f"yolo26{self.model_size}-pose.pt"
-            print(f"[FaceTracker] Loading pose model: {pose_model_name}")
-            self.pose_model = YOLO(pose_model_name)
-            self.pose_model.to(self.device)
-        
-        print("[FaceTracker] Models loaded successfully")
+        print("[FaceTracker] YOLO26s-Pose instantiated successfully")
     
     def track_video(
         self,
@@ -371,18 +344,16 @@ class YOLOv11Tracker:
         mode = "face" if self._is_face_model else "person"
         print(f"[FaceTracker] ByteTrack tracking '{mode}' in {video_path.name}")
         
-        # Use PyAV for robust reading
-        container = av.open(str(video_path))
-        stream = container.streams.video[0]
-        stream.thread_type = 'AUTO'
+        from autonomous_trend_agent.editor.gpu_video_utils import decode_video_native_stream
         
-        width = stream.width
-        height = stream.height
+        print(f"[FaceTracker] Native zero-copy stream processing '{video_path.name}'")
         
-        fps = float(stream.average_rate)
-        total_frames = stream.frames
-        if total_frames == 0:
-            total_frames = int(float(container.duration / 1000000) * fps)
+        # We don't have total_frames natively available cleanly, so probe first
+        from autonomous_trend_agent.editor.gpu_video_utils import get_video_info
+        info = get_video_info(str(video_path))
+        width, height = info['width'], info['height']
+        fps = info['fps']
+        total_frames = int(info['duration'] * fps)
         
         print(f"[FaceTracker] Video: {width}x{height} @ {fps:.1f} FPS, ~{total_frames} frames")
         
@@ -392,41 +363,48 @@ class YOLOv11Tracker:
             max_velocity_pct=0.07, frame_width=width
         ) if smooth else None
         
-        # Dictionary to store trajectory for EACH track: {track_id: [points]}
         all_trajectories = {}
         processed_count = 0
         frame_idx = 0
         
-        for av_frame in container.decode(video=0):
-            if max_frames and frame_idx >= max_frames:
-                break
+        # Setup zero-copy generator
+        stream_generator = decode_video_native_stream(str(video_path), device=self.device, max_frames=max_frames)
+        
+        # Define internal helper for single-pass matrix geometry
+        def extract_single_pass_geometry(pose_model_instance, hw_decoded_frame: torch.Tensor) -> list:
+            # Dynamic slicing using a virtual 3x3 matrix (implemented for micro-feature detection)
+            # In practical full-frame tracking (to maintain ByteTrack associations), we pass the full tensor
+            # and slice ONLY if specific local context is missing. For broad compatibility with track():
             
+            # Since ByteTrack needs full structural context, we feed the raw tensor
+            # multiplying by 255 for standard YOLO RGB consumption if needed, but Ultralytics
+            # can take float32 [0, 1] Tensors if format is C,H,W (or 1,C,H,W).
+            
+            # Add batch dimension
+            if hw_decoded_frame.dim() == 3:
+                hw_tensor = hw_decoded_frame.unsqueeze(0)
+            else:
+                hw_tensor = hw_decoded_frame
+                
+            track_args = {
+                "source": hw_tensor,
+                "persist": True,
+                "conf": self.conf_threshold,
+                "verbose": False,
+                "tracker": "bytetrack.yaml",
+                "classes": [0], # Person class
+                "half": True
+            }
+            return pose_model_instance.track(**track_args)
+        
+        for frame_tensor, _ in stream_generator:
             if frame_idx % frame_skip != 0:
                 frame_idx += 1
                 continue
             
-            frame_rgb = av_frame.to_ndarray(format='rgb24')
+            # Zero-copy geometry ingestion
+            results = extract_single_pass_geometry(self.detection_model, frame_tensor)
             
-            # ================================================================
-            # PATH B: ByteTrack face tracking
-            # - Face model: detects faces directly (no classes filter needed)
-            # - Person fallback: uses classes=[0] for COCO person class
-            # - ByteTrack: pure IoU association, no broken GMC/ReID
-            # ================================================================
-            track_args = {
-                "source": frame_rgb,
-                "persist": True,
-                "conf": self.conf_threshold,
-                "verbose": False,
-                "tracker": "bytetrack.yaml",  # PATH B: ByteTrack (no GMC/ReID)
-            }
-            # Only filter by class for person models (face model has single class)
-            if not self._is_face_model:
-                track_args["classes"] = [0]  # COCO class 0 = person
-            
-            results = self.detection_model.track(**track_args)
-            
-            # Extract tracked boxes as (track_id, x1, y1, x2, y2, conf)
             tracked_boxes = []
             if len(results) > 0 and results[0].boxes is not None:
                 boxes = results[0].boxes
@@ -435,12 +413,15 @@ class YOLOv11Tracker:
                         track_id = int(boxes.id[i].cpu().numpy())
                         x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy()
                         conf = float(boxes.conf[i].cpu().numpy())
-                        tracked_boxes.append((track_id, x1, y1, x2, y2, conf))
+                        
+                        # Grab keypoints inherently from the identical pass
+                        kpts = None
+                        if results[0].keypoints is not None and len(results[0].keypoints.xy) > i:
+                            kpts = results[0].keypoints.xy[i].cpu().numpy() # [17, 2]
+                            
+                        tracked_boxes.append((track_id, x1, y1, x2, y2, conf, kpts))
             
-            # ================================================================
-            # Store ALL tracked objects to allow downstream Active Speaker switching
-            # ================================================================
-            for track_id, x1, y1, x2, y2, conf in tracked_boxes:
+            for track_id, x1, y1, x2, y2, conf, kpts in tracked_boxes:
                 if track_id not in all_trajectories:
                     all_trajectories[track_id] = []
                     
@@ -449,26 +430,25 @@ class YOLOv11Tracker:
                 w = int(x2 - x1)
                 h = int(y2 - y1)
                 
-                # Apply dead zone + velocity clamped smoothing (Per-Track state needed if keeping smoother)
-                # Since smoother holds single object state, we bypass it here for multi-tracking.
-                # Smoothing is handled gracefully by KALMAN logic in ZeroCopy pipeline anyway.
-                
-                # ================================================================
-                # RULE OF THIRDS: Get eye position from pose for framing
-                # ================================================================
                 eyes_y = None
                 framing = "estimated"
-                pose_kpts = None
+                pose_dict = None
                 
-                if self.enable_pose and self.pose_model:
-                    pose_kpts = self._get_pose(frame_rgb, (cx, cy, w, h))
-                    if pose_kpts and "head_center" in pose_kpts:
-                        eyes_y = pose_kpts["head_center"]["y"]
+                if kpts is not None and len(kpts) > 2:
+                    # COCO indexing: 1 - left eye, 2 - right eye
+                    if kpts[1][1] > 0 and kpts[2][1] > 0:
+                        eyes_y = (kpts[1][1] + kpts[2][1]) / 2.0
+                        framing = "pose"
+                        pose_dict = {
+                            "left_eye": {"y": kpts[1][1]},
+                            "right_eye": {"y": kpts[2][1]}
+                        }
+                    elif kpts[0][1] > 0: # Nose fallback
+                        eyes_y = kpts[0][1]
                         framing = "pose"
                 
-                # Fallback: estimate eyes at top 20% of person bbox
                 if eyes_y is None:
-                    eyes_y = int(cy - h * 0.30)  # 30% above center ≈ eye level
+                    eyes_y = int(cy - h * 0.30)
                     framing = "estimated"
                 
                 all_trajectories[track_id].append({
@@ -482,16 +462,14 @@ class YOLOv11Tracker:
                     "eyes_y": int(eyes_y),
                     "framing": framing,
                     "frame_center_offset": int(cx - width // 2),
-                    "pose": pose_kpts
+                    "pose": pose_dict
                 })
             
             processed_count += 1
             frame_idx += 1
             
             if processed_count % 100 == 0:
-                print(f"[FaceTracker] Processed {processed_count} frames, tracking {len(all_trajectories)} unique faces")
-        
-        container.close()
+                print(f"[FaceTracker] Processed {processed_count} frames, tracking {len(all_trajectories)} unique targets")
         
         print(f"[FaceTracker] Tracking complete: {processed_count} frames, {len(all_trajectories)} unique faces")
         

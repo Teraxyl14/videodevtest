@@ -145,7 +145,14 @@ class VideoSearcher:
 
     def filter_by_quality(self, candidates: List[VideoCandidate]) -> List[VideoCandidate]:
         """
-        Apply quality gates to each candidate (C1.2).
+        Applies architectural quality gates to each candidate (Objective C1.2).
+        
+        ARCHITECTURE NOTE: 
+        These strict bounds protect the downstream pipeline from OOM crashes or 
+        AI context-window hallucination:
+        - Too short (< 15m): Gemini won't have enough script depth to find 3-4 distinct moments.
+        - Too long (> 30-60m): Transcription arrays overflow VRAM; Qwen-VL context limits hit.
+        
         Sets candidate.passes_quality and candidate.quality_notes.
         Returns only passing candidates.
         """

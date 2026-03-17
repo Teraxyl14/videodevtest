@@ -1,42 +1,37 @@
-# AI Video Factory - Docker Container Requirements
-# These are installed INSIDE the NGC container on first run
-
-# Core dependencies (already in NGC containers but listed for reference)
-# Note: torch, torchvision, torchaudio are installed via Dockerfile (Nightly)
+# AI Video Factory - Docker Container Requirements (Stage 1: Core)
+# Installed INSIDE the NGC PyTorch 25.03 container
+#
+# NOTE: The NGC base already provides: torch, torchvision, torchaudio,
+#   numpy, scipy, pillow, opencv, grpcio, protobuf, pydantic, safetensors
+#   DO NOT list those here.
+#
+# NOTE: pyannote-audio, whisperx, and autoawq are installed separately
+#   in the Dockerfile with --no-deps due to torch/numpy version pins.
 
 # HuggingFace ecosystem
-huggingface_hub
-transformers>=4.50.0
-accelerate
-safetensors
+huggingface_hub<1.0.0
+transformers>=4.48.0,<5.0.0
 
 # Video/Image processing
-opencv-python-headless
-pillow
-numpy
 pysubs2
-filterpy
+filterpy==1.4.5
 
-# GPU-accelerated transforms (effects, reframing)
+# GPU-accelerated transforms
 kornia
 librosa
 skia-python
 
-# Object tracking (YOLOv11/v12)
+# Object tracking
 ultralytics>=8.4.0
 
-# Our Spokes use these
+# Qwen VL utilities
 qwen-vl-utils
 
-# NeMo is provided by the NGC container
-# nemo_toolkit[asr]  # Only needed in audio container
-
-# GUI & Monitoring
+# GPU monitoring
 nvidia-ml-py
-grpcio
+
+# gRPC tooling
 grpcio-tools
-protobuf
-pydantic
 
 # Dashboard Server
 fastapi
@@ -49,14 +44,21 @@ pytrends
 playwright
 playwright-stealth
 google-genai
-google-api-python-client  # YouTube Data API v3
-yt-dlp                    # Phase 2 video download
+google-api-python-client
+yt-dlp
 python-dotenv
 
-# 4-bit quantization for Qwen3-VL
+# 4-bit quantization
 bitsandbytes>=0.46.1
 
-# Legacy Gemini SDK (used by editor_llm.py, gemini_services.py)
+# Legacy Gemini SDK
 google-generativeai
-# Data pipeline (sensors/normalizer)
+
+# Data pipeline
 redis
+
+# WhisperX runtime deps that DON'T conflict with NGC
+ctranslate2>=4.5.0
+faster-whisper>=1.1.1
+nltk>=3.9.1
+omegaconf>=2.3.0
