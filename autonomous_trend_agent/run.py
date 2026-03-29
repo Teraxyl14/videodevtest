@@ -182,14 +182,15 @@ def run_phase1(output_dir: Path) -> dict:
     logger.info("=" * 60)
 
     try:
+        import asyncio
         from autonomous_trend_agent.sensors.trend_discovery import (
             TrendDiscovery, TrendDiscoveryConfig,
         )
 
         config = TrendDiscoveryConfig(output_dir=str(output_dir / "phase1"))
         td = TrendDiscovery(config)
-        brief = td.run()
-        brief_dict = asdict(brief)
+        brief = asyncio.run(td.run())
+        brief_dict = brief.model_dump()
 
     except Exception as e:
         logger.error(f"[Phase 1] FAILED: {e}")
@@ -277,20 +278,28 @@ def run_phase345(
     """
     Phases 3-5 — Analyze, edit, and export shorts.
 
+    Uses the v2.1 LangGraph pipeline (langgraph_pipeline.py) which handles:
+        - Transcription (easytranscriber)
+        - Visual Analysis (Qwen3.5-0.8B via vLLM sidecar)
+        - Director (PydanticAI + Gemini 3 Pro)
+        - Subject Tracking (YOLO26s-Pose)
+        - Editing (ZeroCopy pipeline)
+        - QA + Export
+
     Handles:
         - GPU OOM → reduces batch size and retries
-        - 0 viral segments → fallback to uniform splitting
         - Missing dependencies → graceful degradation
 
     Returns:
         dict with pipeline result (success, shorts_created, duration, errors)
     """
-    from autonomous_trend_agent.pipeline.orchestrator import (
-        PipelineOrchestrator, PipelineConfig, PipelineResult,
+    import asyncio
+    from autonomous_trend_agent.pipeline.langgraph_pipeline import (
+        run_pipeline, PipelineConfig,
     )
 
     logger.info("=" * 60)
-    logger.info("PHASES 3-5 — ANALYSIS → EDITING → OUTPUT")
+    logger.info("PHASES 3-5 — ANALYSIS → EDITING → OUTPUT (LangGraph v2.1)")
     logger.info("=" * 60)
     logger.info(f"  Video: {video_path}")
     logger.info(f"  Output: {output_dir}")
@@ -321,28 +330,39 @@ def run_phase345(
                 use_gpu_reframing=True,
                 use_yolo_tracking=True,
                 use_qwen_analysis=True,
-                use_gemini_analysis=True,
-                use_effects=True,
                 use_captions=True,
-                use_active_speaker=True,
-                use_llm_director=True,
                 use_boredom_detector=True,
             )
 
-            orchestrator = PipelineOrchestrator(config=config)
-            try:
-                result: PipelineResult = orchestrator.run(video_path)
-            finally:
-                orchestrator.shutdown()
-                _force_vram_cleanup()
+            # Run the async LangGraph pipeline
+            result = asyncio.run(
+                run_pipeline(
+                    video_path=video_path,
+                    config=config,
+                    use_redis=False,  # Use memory saver for now
+                )
+            )
+            _force_vram_cleanup()
 
-            result_dict = asdict(result)
-            if result.success:
-                logger.info(f"Phases 3-5 complete → {len(result.shorts_created)} shorts generated")
-                logger.info(f"  Output dir: {result.output_dir}")
-                logger.info(f"  Duration: {result.duration_seconds:.1f}s")
+            # Extract results from the LangGraph state dict
+            shorts_created = result.get("shorts", [])
+            errors = result.get("errors", [])
+            elapsed = result.get("elapsed_time", 0)
+
+            result_dict = {
+                "success": len(shorts_created) > 0 and not errors,
+                "shorts_created": shorts_created,
+                "output_dir": output_dir,
+                "duration_seconds": elapsed,
+                "errors": errors,
+            }
+
+            if result_dict["success"]:
+                logger.info(f"Phases 3-5 complete → {len(shorts_created)} shorts generated")
+                logger.info(f"  Output dir: {output_dir}")
+                logger.info(f"  Duration: {elapsed:.1f}s")
             else:
-                logger.warning(f"Pipeline completed with errors: {result.errors}")
+                logger.warning(f"Pipeline completed with errors: {errors}")
 
             return result_dict
 

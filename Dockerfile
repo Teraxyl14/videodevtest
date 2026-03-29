@@ -1,11 +1,11 @@
 # ============================================================================
-# AUTONOMOUS TREND AGENT - V2 GOLDEN STACK DOCKER IMAGE
+# PROJECT AETHER v2.2 - DOCKER IMAGE (March 2026 Stack)
 # ============================================================================
-# Single-stage build on NGC PyTorch base for Blackwell (sm_120) support
-# Includes: FFmpeg 7.1 (source), PyTorch Nightly (cu128), PyNvVideoCodec 2.0.2
+# NGC 26.03 base (native Blackwell sm_120) + vLLM 0.18.0 (pip, Qwen3.5)
+# Stack: PyTorch 2.10.0, transformers 5.x, vLLM 0.18.0, easytranscriber
 # ============================================================================
 
-FROM nvcr.io/nvidia/pytorch:25.03-py3
+FROM nvcr.io/nvidia/pytorch:26.03-py3
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -15,7 +15,7 @@ ENV LD_LIBRARY_PATH="/usr/lib/wsl/lib:/usr/local/lib/python3.12/dist-packages/Py
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility,graphics
 
 # Blackwell-specific: Enable expandable memory segments
-ENV PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+ENV PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:512"
 ENV TORCH_CUDA_ARCH_LIST="12.0"
 
 # Model cache directories (mounted volumes)
@@ -24,7 +24,7 @@ ENV HF_HOME=/app/models/huggingface
 ENV TORCH_HOME=/app/models/torch
 
 # =============================================================================
-# 1. Install Build Dependencies for FFmpeg 7.1
+# 1. Install Build Dependencies for FFmpeg 7.1 + Redis
 # =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     yasm pkg-config libgnutls28-dev libdrm-dev libva-dev \
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev libx264-dev libx265-dev libnuma-dev \
     libvpx-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
     libvorbis-dev libgl1-mesa-dev git wget build-essential \
-    supervisor \
+    supervisor redis-server \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
@@ -67,91 +67,91 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz && \
     cd .. && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.gz
 
 # =============================================================================
-# 4. PyTorch — NGC 25.03 already ships torch 2.7.0 with sm_120 (Blackwell)
-#    No nightly needed. If you need bleeding-edge nightly, uncomment below:
+# 4. Setup WSL2 library paths
 # =============================================================================
-# RUN pip config set global.constraint '' && \
-#     pip install --pre --force-reinstall torch torchvision torchaudio \
-#     --index-url https://download.pytorch.org/whl/nightly/cu128
+RUN echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/wsl.conf && ldconfig
+
+RUN ln -sf /usr/lib/wsl/lib/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 || true && \
+    ln -sf /usr/lib/wsl/lib/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 || true && \
+    ln -sf /usr/lib/wsl/lib/libdxcore.so /usr/lib/x86_64-linux-gnu/libdxcore.so || true
 
 # =============================================================================
-# 4b. NeMo ASR Toolkit — DEPRECATED in v2.0
-#     Parakeet TDT replaced by WhisperX (installed via requirements_docker.txt)
+# 5. Remove NGC pip constraint pins that block upgrades
+#    NGC 26.03 pins torch, transformers, huggingface_hub in /etc/pip/constraint.txt
+#    We need to override these for vLLM 0.18.0 (requires PyTorch 2.10.0)
 # =============================================================================
+RUN sed -i '/^torch[=<>]/d; /^transformers[=<>]/d; /^huggingface.hub[=<>]/d; /^regex[=<>]/d; /^tokenizers[=<>]/d' /etc/pip/constraint.txt || true
 
 # =============================================================================
-# 5. Install PyNvVideoCodec (Zero-Copy GPU Video Decoder/Encoder) - v2.1.0 required
+# 6. Install PyTorch 2.10.0 (cu128) — required by vLLM 0.18.0
 # =============================================================================
-RUN pip install PyNvVideoCodec==2.1.0
+RUN pip install --no-cache-dir torch==2.10.0 torchvision torchaudio \
+    --extra-index-url https://download.pytorch.org/whl/cu128
 
 # =============================================================================
-# 6. CRITICAL FIX: Remove bundled FFmpeg libs and setup WSL2 library paths
-#    Prevents symbol lookup errors and fixes Blackwell Error 100 on WSL
+# 7. Install vLLM 0.18.0 (pip — native sm_120 + Qwen3.5 support)
+#    No more source compilation needed!
 # =============================================================================
-RUN cd /usr/local/lib/python3.12/dist-packages/PyNvVideoCodec && \
-    rm -f libav*.so* libsw*.so* && \
-    echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/wsl.conf && \
-    ldconfig
-
-RUN ln -s /usr/lib/wsl/lib/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 | true && \
-    ln -s /usr/lib/wsl/lib/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 | true && \
-    ln -s /usr/lib/wsl/lib/libdxcore.so /usr/lib/x86_64-linux-gnu/libdxcore.so | true
+RUN pip install --no-cache-dir vllm==0.18.0 \
+    --extra-index-url https://download.pytorch.org/whl/cu128
 
 # =============================================================================
-# 7. Install Project Python Dependencies
+# 8. Install transformers 5.x + huggingface_hub for Qwen3.5 (qwen3_5 arch)
+# =============================================================================
+RUN pip install --no-cache-dir "transformers>=5.2.0" "huggingface_hub>=1.0"
+
+# Patch vLLM 0.18.0 bug: qwen3_5.py passes ignore_keys_at_rope_validation as
+# a list but huggingface_hub's dataclass validator does set -= value (needs set)
+RUN python3 -c "\
+f='/usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/configs/qwen3_5.py'; \
+t=open(f).read(); \
+t=t.replace('ignore_keys_at_rope_validation\"] = [', 'ignore_keys_at_rope_validation\"] = {').replace(\
+'\"mrope_interleaved\",\n        ]', '\"mrope_interleaved\",\n        }'); \
+open(f,'w').write(t); print('Patched qwen3_5.py: list -> set')"
+
+# =============================================================================
+# 9. Install Project Python Dependencies
 # =============================================================================
 WORKDIR /app
 COPY requirements_docker.txt .
 RUN pip install --no-cache-dir -r requirements_docker.txt
 
 # =============================================================================
-# 7b. Install WhisperX + pyannote-audio (--no-deps to bypass torch/numpy pins)
-#     Both whisperx and pyannote-audio pin torch~=2.8.0, numpy>=2.1.0
-#     but run fine with NGC's torch 2.7.0 and numpy 1.26.4 at runtime.
-#     Their actual runtime deps (ctranslate2, faster-whisper, etc.) are in
-#     requirements_docker.txt.
+# 10. Install PyNvVideoCodec 2.1.0 (Zero-Copy GPU Video Decoder/Encoder)
 # =============================================================================
-RUN pip install --no-cache-dir --no-deps git+https://github.com/m-bain/whisperx.git && \
+RUN pip install --no-cache-dir pynvvideocodec==2.1.0 || \
+    echo "WARNING: PyNvVideoCodec 2.1.0 failed — may need version bump for CUDA 13.x"
+
+# Clean up bundled PyNvVideoCodec FFmpeg libs that conflict with our build
+RUN cd /usr/local/lib/python3.12/dist-packages/PyNvVideoCodec 2>/dev/null && \
+    rm -f libav*.so* libsw*.so* && \
+    ldconfig || true
+
+# =============================================================================
+# 11. Install easytranscriber (--no-deps: torch/torchaudio already installed)
+# =============================================================================
+RUN pip install --no-cache-dir --no-deps easytranscriber && \
+    pip install --no-cache-dir --no-deps easyaligner && \
     pip install --no-cache-dir --no-deps pyannote-audio
 
 # =============================================================================
-# 8. Install AutoAWQ (needs --no-build-isolation to bind existing PyTorch)
+# 12. Install high-dependency modules (--no-deps: avoids resolver hell)
 # =============================================================================
-RUN pip install --no-cache-dir --no-build-isolation autoawq
+RUN pip install --no-cache-dir --no-deps crawl4ai langgraph pydantic-ai google-genai
 
 # =============================================================================
-# 9. Install Playwright Browsers (for Trend Discovery scraping)
+# 13. Install Playwright Browsers (for Crawl4AI web scraping)
 # =============================================================================
 RUN playwright install chromium && \
     playwright install-deps
 
 # =============================================================================
-# 10. Compile vLLM from source for Blackwell (sm_120) with strict ABI override
-#     Bypasses PEP 517 isolation to bind against PyTorch Nightly cu128
+# 14. Install caption fonts
 # =============================================================================
-RUN git clone https://github.com/vllm-project/vllm.git && cd vllm && \
-    python use_existing_torch.py && \
-    pip install -r requirements/build.txt && \
-    pip install setuptools_scm && \
-    export CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" && \
-    export CMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" && \
-    export TORCH_CUDA_ARCH_LIST="12.0+PTX" && \
-    export NVCC_GENCODE="-gencode=arch=compute_120,code=sm_120" && \
-    export VLLM_FLASH_ATTN_VERSION=2 && \
-    export MAX_JOBS=6 && export NVCC_THREADS=2 && export CMAKE_BUILD_PARALLEL_LEVEL=6 && \
-    pip install --no-build-isolation -e . -v && \
-    cd .. && rm -rf vllm
-
-# =============================================================================
-# Install fontconfig, system fonts, AND caption-ready bold fonts
-# - fonts-dejavu-core: reliable fallback
-# - fonts-freefont-ttf: includes FreeSansBold (Impact-like heavy sans-serif)
-# - fonts-liberation: Liberation Sans (Arial Black substitute, metrically compatible)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig fonts-dejavu-core fonts-freefont-ttf fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Montserrat-Black from Google Fonts (open-source, OFL license)
 RUN mkdir -p /usr/local/share/fonts/custom && \
     wget -q -O /tmp/montserrat.zip "https://fonts.google.com/download?family=Montserrat" && \
     unzip -q -o /tmp/montserrat.zip -d /tmp/montserrat && \
@@ -162,12 +162,9 @@ RUN mkdir -p /usr/local/share/fonts/custom && \
     fc-cache -fv
 
 # =============================================================================
-# 10. Copy Application Code & Config
+# 15. Copy Application Code & Config
 # =============================================================================
 COPY autonomous_trend_agent/ /app/autonomous_trend_agent/
-# NOTE: .env is injected via docker-compose env_file, not baked into image
-
-# Copy Supervisor config (if present)
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create runtime directories
@@ -176,5 +173,5 @@ RUN mkdir -p /var/log/pipeline /app/checkpoints /app/output
 # Mark as Docker environment
 ENV DOCKER_CONTAINER=1
 
-# Default: run orchestrator (can be overridden by docker-compose)
-CMD ["python", "-m", "autonomous_trend_agent.pipeline.orchestrator"]
+# Start supervisord to manage sidecars and the pipeline
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

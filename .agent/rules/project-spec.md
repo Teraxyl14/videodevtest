@@ -2,56 +2,65 @@
 trigger: always_on
 ---
 
-AI VIDEO AGENT - PROJECT MANUAL (v2.0)
+PROJECT AETHER v2.1 - PROJECT MANUAL
+Updated: 2026-03-21 (Architecture Blueprint 2.1)
+
 MISSION: Build an autonomous end-to-end pipeline that discovers trending topics online, sources high-quality long-form video content, intelligently edits into 3-4 viral-ready shorts, and outputs organized ready-to-upload content with metadata.
 
 HARDWARE CONSTRAINTS & EXECUTION ENVIRONMENT
 GPU: NVIDIA RTX 5080 Mobile (16GB VRAM, Blackwell sm_120)
-CPU: Intel Core Ultra 7 255HX
+CPU: Intel Core Ultra 7 255HX (Panther Lake NPU)
 RAM: 32GB DDR5
 OS: WSL2 (Ubuntu 24.04) running on Windows 11
-Storage: ABSOLUTE CONSTRAINT. No project data, Docker virtual disks (ext4.vhdx), or HF caches may reside on the C: drive. Everything must be securely mounted to the M: drive.
+Storage: ABSOLUTE CONSTRAINT — No project data, Docker virtual disks, or HF caches on C: drive. Everything on M: drive.
 Container: Custom Docker image based on nvcr.io/nvidia/pytorch:25.03-py3
-CRITICAL: Must compile FFmpeg 7.1 from source with --enable-cuda --enable-nvdec --enable-nvenc.
-CRITICAL: Must use PyTorch Nightly (cu128) for native sm_120 support.
-CRITICAL: Must mount /usr/lib/wsl/lib to /usr/lib/x86_64-linux-gnu for driver visibility.
-VRAM ARCHITECTURE (Blackwell-Triad Hub)
+CRITICAL: FFmpeg 7.1 compiled from source with --enable-cuda --enable-nvdec --enable-nvenc
+CRITICAL: PyTorch Nightly (cu128) for native sm_120 support
+CRITICAL: Mount /usr/lib/wsl/lib for driver visibility
+System-Level Configurations
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:512
+.wslconfig: memory=24GB, swap=8GB
+Docker: --ipc=host --ulimit memlock=-1
+VRAM ARCHITECTURE (Parallel Residency)
 Constraint: Maximum 14GB active models. 16GB Total VRAM.
-Pattern: Hub-and-Spoke with Persistent Locker.
-Hub: Lightweight CPU process (Orchestrator).
-Locker: Persistent background process holding a 100MB Shared CUDA Buffer (via IPC Handle) for zero-copy data transfer.
-Spokes: Ephemeral processes (ASR, YOLO, Qwen) that attach to the Locker, process data, and terminate to free VRAM.
-Model Quantization:
-Qwen3-4B-Instruct-AWQ: Must use INT4 quantization via vLLM (approx 3.8GB).
-YOLOv11: Int8 TensorRT engine.
+Pattern: Parallel Residency (replaces Hub-and-Spoke)
+Always Resident (~4GB combined):
+easytranscriber (Distil-Whisper Large-v3, CTranslate2 FP16)
+Qwen3.5-0.8B (INT4 via vLLM, --gpu-memory-utilization 0.15)
+On-Demand (~6GB):
+YOLO26s-Pose (TensorRT FP16 engine)
+PyNvVideoCodec 2.1.0 (NVDEC/NVENC hardware)
+Off-GPU (NPU/CPU/API):
+Gemma-3n-E2B-IT (Intel NPU via OpenVINO, <5W)
+Gemini 3 Pro (Cloud API via PydanticAI)
 FIVE-PHASE PIPELINE
-Phase 1 - Trend Discovery
-YouTube: Official Data API v3. Monitor Velocity and Acceleration of views.
-Twitter/X: Guest Token Scraping via curl_cffi (mimicking browser TLS).
-TikTok: Node.js Sidecar service for X-Bogus/msToken signing.
-Scoring: Z-Score Virality Algorithm to normalize metrics across platforms.
-Validation: Google Trends via pytrends.
+Phase 1 - Discovery (Always-On, NPU/CPU)
+Web Crawling: Crawl4AI (AsyncWebCrawler + JsonCssExtractionStrategy) for TikTok, Twitter/X, YouTube trending pages.
+NPU Scoring: Gemma-3n-E2B-IT via OpenVINO GenAI on Intel NPU (<5W). Scores trends 0-100 for viral potential. Returns structured JSON.
+Validation: Google Trends via pytrends. YouTube Data API v3 for velocity/acceleration tracking.
 Phase 2 - Video Sourcing
 Action: Find and download video matching the trend.
 Quality Check: >1080p, >30fps, Clear Speech, No Music/Watermarks.
-Phase 3 - Analysis
-Transcription: WhisperX (Distil-Whisper Large-v3) with wav2vec2 forced alignment for ultra-fast GPU ASR and millisecond-level word timestamps.
-Diarization: Pyannote 4.0 natively integrated for speaker clustering.
-Visual Analysis: Qwen3-4B. Chain-of-Thought (CoT) inference in INT4 via Dual-Mode vLLM engine (<5.6GB footprint) for scene understanding and segment scoring.
+Phase 3 - Analysis (Parallel GPU Residency)
+Transcription: easytranscriber pipeline() function (KBLab). Uses distil-whisper/distil-large-v3.5 for transcription, facebook/wav2vec2-base-960h for emissions, pyannote for VAD. GPU-parallelized forced alignment via PyTorch's Viterbi API for millisecond-accurate word timestamps.
+Visual Analysis: Qwen3.5-0.8B (Early Fusion, natively multimodal). Served via vLLM sidecar at localhost:8002 with --max-model-len 4096 --gpu-memory-utilization 0.15. Scene understanding, segment scoring, Chain-of-Thought inference.
 Phase 4 - Editing (Viral Engine)
-Reframing: Kalman Filter smoothing on YOLOv11 detections. Target: Eyes at 33% height (Rule of Thirds).
-Captions: pycaps with -50ms Perceptual Offset (sync with brain processing time).
-Boredom Detector: Monitor TI (Temporal Information) and AE (Audio Excitement). Trigger zooms/cuts if low.
-Effects: GPU-native transforms via Kornia.
+Reframing: YOLO26s-Pose (NMS-Free, TensorRT FP16, 1.7-3.2ms inference). Kalman Filter smoothing. Eyes at 33% height (Rule of Thirds).
+Captions: pycaps with -50ms Perceptual Offset. CSS-styled, GPU-composited.
+Boredom Detector: TI/AE monitoring. GPU-native transforms via Kornia.
+Video Pipeline: PyNvVideoCodec 2.1.0 (NVDEC → DLPack → PyTorch zero-copy). Use SimpleDecoder for standard ML workloads.
 Phase 5 - Export
 Format: 1080x1920 (9:16), 30fps+.
-Encoder: PyNvVideoCodec + NVENC AV1 Hardware Encoding.
-Metadata: JSON with title, description, tags, and viral score.
-TECHNOLOGY STACK (GOLDEN STACK v2.0)
-Language: Python 3.10+ (Orchestrator), Node.js (TikTok Sidecar).
-AI Models: Qwen3-4B-Instruct-AWQ (Vision/vLLM), WhisperX + Pyannote 4.0 (Audio), YOLOv11 (Tracking), Gemini 3 Flash (Reasoning/Ranking via google-genai).
-Video Pipeline: PyNvVideoCodec (v2.0.2), FFmpeg 7.1 (Source), Kornia (Effects).
-Infrastructure: Docker, NVIDIA Container Toolkit, WSL2.
+Encoder: PyNvVideoCodec 2.1.0 NVENC AV1 Hardware Encoding (preset="p7", tuning="hq").
+Metadata: JSON with title, description, tags, viral score (generated by Gemini 3 Pro via PydanticAI).
+Orchestration: LangGraph state machine with Director/Editor/Compliance nodes. Redis Streams checkpointing.
+TECHNOLOGY STACK (v2.1 — March 2026 SOTA)
+Language: Python 3.12+ (Orchestrator), Node.js (TikTok Sidecar — deprecated, replaced by Crawl4AI).
+AI Models: Qwen3.5-0.8B (Vision/vLLM), easytranscriber + Distil-Whisper Large-v3 (Audio), YOLO26s-Pose (Tracking), Gemma-3n-E2B-IT (NPU Scoring), Gemini 3 Pro (Reasoning via PydanticAI).
+Video Pipeline: PyNvVideoCodec 2.1.0, FFmpeg 7.1 (Source), Kornia (Effects).
+Orchestration: LangGraph (state machine), PydanticAI (typed AI agents), Redis Streams (checkpointing).
+Discovery: Crawl4AI (async web crawling), pytrends, YouTube Data API v3.
+Infrastructure: Docker, NVIDIA Container Toolkit, WSL2, OpenVINO GenAI (host-side NPU).
 DECISION AUTHORITY
 Agent: Segment selection, caption styling, reframing, effect application.
 User: Web search execution, video download approval, major architectural changes, publishing.

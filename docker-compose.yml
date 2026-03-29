@@ -1,32 +1,50 @@
 # ============================================================================
-# DOCKER COMPOSE - AI Video Pipeline V2 (Golden Stack v2.0)
+# PROJECT AETHER v2.1 - DOCKER COMPOSE
 # ============================================================================
-# Production configuration with GPU, IPC, logging, and volume mounts
+# Production configuration: GPU, Redis, vLLM sidecar, volume mounts
+# VRAM Architecture: Parallel Residency (~4GB always-on + on-demand)
 # ============================================================================
 
 services:
+  # ─── Redis (Checkpointing) ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aether_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─── Main Pipeline Worker ──────────────────────────────────────────────
   ml-pipeline:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai-video-pipeline:latest
-    container_name: ai_video_worker
+    image: aether-pipeline:v2.1
+    container_name: aether_worker
 
-    # Dashboard Server Port
     ports:
-      - "8080:8080"
+      - "8080:8080"   # Dashboard
+      - "8002:8002"   # vLLM sidecar (Qwen3.5-0.8B)
 
-    # CRITICAL: nvidia runtime for GPU access in docker-compose
+    # CRITICAL: nvidia runtime for GPU access
     runtime: nvidia
 
-    # CRITICAL: Required for VRAM Locker CUDA IPC between processes
+    # CRITICAL: Required for CUDA IPC between processes
     ipc: host
-    shm_size: '1g' # Essential for zero-copy IPC memory sharing
+    shm_size: '1g'
 
     # CRITICAL: Prevent memory locking issues with pinned CUDA memory
     ulimits:
       memlock: -1
-      stack: 67108864 # 64MB stack
+      stack: 67108864  # 64MB
 
     # GPU Configuration (Blackwell RTX 5080)
     deploy:
@@ -35,9 +53,9 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [ gpu, video ] # video = NVDEC/NVENC
+              capabilities: [ gpu, video ]  # video = NVDEC/NVENC
 
-    # Volume Mounts (all data on host ext4, not Windows NTFS)
+    # Volume Mounts (all data on M: drive, not C:)
     volumes:
       # Models (large, persistent)
       - ./models:/app/models
@@ -47,17 +65,16 @@ services:
       - ./output:/app/output
       # Downloaded Videos
       - ./downloaded_videos:/app/downloaded_videos
-      # Checkpoints (crash recovery)
+      # Checkpoints (Redis Streams + crash recovery)
       - ./checkpoints:/app/checkpoints
       # Logs (persistent)
       - ./logs:/var/log/pipeline
       # Code (for development hot-reload)
       - ./autonomous_trend_agent:/app/autonomous_trend_agent:ro
-      # HuggingFace model cache (persist downloads across restarts)
-      - ./autonomous_trend_agent/models/huggingface:/workspace/models/huggingface
+      # HuggingFace model cache
+      - ./models/huggingface:/app/models/huggingface
 
       # WSL2 NVDEC/NVENC Library Mounts (CRITICAL for video acceleration)
-      # Mount entire wsl directory so Docker resolves symlinks perfectly
       - /usr/lib/wsl:/usr/lib/wsl:ro
 
     # External Environment File
@@ -73,6 +90,18 @@ services:
       - TORCH_CUDA_ARCH_LIST=12.0
       - INPUT_DIR=/app/input
       - OUTPUT_DIR=/app/output
+      - REDIS_URL=redis://redis:6379
+      - HF_HOME=/app/models/huggingface
+      - TRANSFORMERS_CACHE=/app/models/huggingface
+      - TORCH_HOME=/app/models/torch
+      - YOLO_CONFIG_DIR=/app/models/ultralytics
+      - CRAWL4AI_DATA_DIR=/app/data/crawl4ai
+
+    # Dependencies
+    depends_on:
+      redis:
+        condition: service_healthy
+
     # Logging (JSON format, rotated)
     logging:
       driver: "json-file"
@@ -80,13 +109,13 @@ services:
         max-size: "100m"
         max-file: "5"
 
-    # Reliability — container stays alive in standby mode
+    # Reliability
     restart: always
-    stop_grace_period: 60s # Allow 60s for checkpoint save
+    stop_grace_period: 60s
 
-    # Override CMD: keep container alive in standby mode
-    # Trigger pipeline via: docker exec ai_video_worker python -m autonomous_trend_agent.pipeline.orchestrator <video_path>
-    command: [ "tail", "-f", "/dev/null" ]
+    # Override: keep container alive in standby mode
+    # Pipeline trigger: docker exec aether_worker python -m autonomous_trend_agent.pipeline.langgraph_pipeline
+    # command: [ "tail", "-f", "/dev/null" ]
 
     healthcheck:
       test: [ "CMD", "python", "-c", "import torch; print(torch.cuda.is_available())" ]

@@ -1,16 +1,18 @@
-# AI Video Factory - Docker Container Requirements (Stage 1: Core)
-# Installed INSIDE the NGC PyTorch 25.03 container
+# Project Aether v2.2 - Docker Container Requirements
+# Installed INSIDE the NGC PyTorch 26.03 container
 #
-# NOTE: The NGC base already provides: torch, torchvision, torchaudio,
-#   numpy, scipy, pillow, opencv, grpcio, protobuf, pydantic, safetensors
-#   DO NOT list those here.
+# NOTE: torch, torchvision, torchaudio are installed explicitly in Dockerfile
+#   (PyTorch 2.10.0 cu128 wheel — required by vLLM 0.18.0)
 #
-# NOTE: pyannote-audio, whisperx, and autoawq are installed separately
-#   in the Dockerfile with --no-deps due to torch/numpy version pins.
+# NOTE: vLLM 0.18.0 is installed explicitly in Dockerfile
+#
+# NOTE: crawl4ai, langgraph, pydantic-ai, google-genai, easytranscriber,
+#   easyaligner, pyannote-audio are installed separately in the Dockerfile
+#   with --no-deps to avoid transitive dependency conflicts.
 
-# HuggingFace ecosystem
-huggingface_hub<1.0.0
-transformers>=4.48.0,<5.0.0
+# HuggingFace ecosystem (already installed in Dockerfile, these are minimums)
+huggingface_hub>=1.0.0
+transformers>=5.2.0
 
 # Video/Image processing
 pysubs2
@@ -21,43 +23,56 @@ kornia
 librosa
 skia-python
 
-# Object tracking
+# Object tracking (YOLO26s-Pose)
 ultralytics>=8.4.0
-
-# Qwen VL utilities
-qwen-vl-utils
 
 # GPU monitoring
 nvidia-ml-py
-
-# gRPC tooling
-grpcio-tools
 
 # Dashboard Server
 fastapi
 uvicorn[standard]
 websockets
 
-# Trend Discovery
-curl_cffi
-pytrends
+# Trend Discovery — crawl4ai runtime deps (crawl4ai --no-deps in Dockerfile)
+beautifulsoup4>=4.12
 playwright
 playwright-stealth
-google-genai
+aiohttp>=3.9
+html2text>=2024.2
+tiktoken
+rank-bm25
+
+# Google APIs
 google-api-python-client
+pytrends
 yt-dlp
 python-dotenv
 
-# 4-bit quantization
-bitsandbytes>=0.46.1
+# Orchestration — runtime deps for --no-deps packages
+httpx>=0.27.0
+langsmith>=0.1.0
+langchain-core>=0.3.0
+griffe>=1.0.0
+langgraph-checkpoint
+pydantic-ai-slim>=0.0.36
+google-genai>=0.8.0
 
-# Legacy Gemini SDK
-google-generativeai
+# Crawl4AI runtime deps
+pyOpenSSL
+aiofiles
+snowballstemmer
+fake-useragent
+chardet
+aiosqlite
 
-# Data pipeline
+# OpenAI client (for vLLM sidecar OpenAI-compatible API)
+openai>=1.60.0
+
+# Data pipeline / Checkpointing (Redis Streams)
 redis
 
-# WhisperX runtime deps that DON'T conflict with NGC
+# easytranscriber runtime deps
 ctranslate2>=4.5.0
 faster-whisper>=1.1.1
 nltk>=3.9.1

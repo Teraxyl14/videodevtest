@@ -1,0 +1,82 @@
+﻿docker : --progress is a global compose flag, 
+better use `docker compose --progress xx build 
+...
+At line:1 char:1
++ docker compose build --progress=plain 2>&1 | 
+Out-File -FilePath "M:\P ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (- 
+   -progress is a...ss xx build ...:String) [  
+  ], RemoteException
+    + FullyQualifiedErrorId : NativeCommandErr 
+   or
+ 
+ Image aether-pipeline:v2.1 Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 605B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 8.11kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for nvcr.io/nvidia/pytorch:25.03-py3
+#3 DONE 0.1s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 529B done
+#4 DONE 0.0s
+
+#5 [ 1/21] FROM nvcr.io/nvidia/pytorch:25.03-py3@sha256:64887d431df52013f766878a546fad94716cbe0b39d991c3ea5c63a1a7d14c61
+#5 resolve nvcr.io/nvidia/pytorch:25.03-py3@sha256:64887d431df52013f766878a546fad94716cbe0b39d991c3ea5c63a1a7d14c61 0.0s done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 18.35kB 0.0s done
+#6 DONE 0.0s
+
+#7 [ 9/21] RUN pip install --no-cache-dir -r requirements_docker.txt
+#7 CACHED
+
+#8 [ 7/21] WORKDIR /app
+#8 CACHED
+
+#9 [13/21] RUN pip install --no-cache-dir --no-deps crawl4ai langgraph pydantic-ai google-genai
+#9 CACHED
+
+#10 [ 2/21] RUN apt-get update && apt-get install -y --no-install-recommends     yasm pkg-config libgnutls28-dev libdrm-dev libva-dev     libvdpau-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev     libssl-dev libx264-dev libx265-dev libnuma-dev     libvpx-dev libfdk-aac-dev libmp3lame-dev libopus-dev     libvorbis-dev libgl1-mesa-dev git wget build-essential     supervisor redis-server     && rm -rf /var/lib/apt/lists/*
+#10 CACHED
+
+#11 [ 4/21] RUN wget https://ffmpeg.org/releases/ffmpeg-7.1.tar.gz &&     tar -xzf ffmpeg-7.1.tar.gz &&     cd ffmpeg-7.1 &&     ./configure     --prefix=/usr     --enable-shared     --enable-gpl     --enable-nonfree     --enable-cuda     --enable-cuvid     --enable-nvdec     --enable-nvenc     --enable-libdrm     --disable-static     --enable-pic &&     make -j"$(nproc)" &&     make install &&     ldconfig &&     cd .. && rm -rf ffmpeg-7.1 ffmpeg-7.1.tar.gz
+#11 CACHED
+
+#12 [ 6/21] RUN ln -sf /usr/lib/wsl/lib/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 || true &&     ln -sf /usr/lib/wsl/lib/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 || true &&     ln -sf /usr/lib/wsl/lib/libdxcore.so /usr/lib/x86_64-linux-gnu/libdxcore.so || true
+#12 CACHED
+
+#13 [12/21] RUN pip install --no-cache-dir --no-deps easytranscriber &&     pip install --no-cache-dir --no-deps easyaligner &&     pip install --no-cache-dir --no-deps pyannote-audio
+#13 CACHED
+
+#14 [11/21] RUN cd /usr/local/lib/python3.12/dist-packages/PyNvVideoCodec &&     rm -f libav*.so* libsw*.so* &&     ldconfig
+#14 CACHED
+
+#15 [14/21] RUN playwright install chromium &&     playwright install-deps
+#15 CACHED
+
+#16 [ 3/21] RUN git clone https://github.com/FFmpeg/nv-codec-headers.git &&     cd nv-codec-headers &&     make && make install &&     cd .. && rm -rf nv-codec-headers
+#16 CACHED
+
+#17 [ 5/21] RUN echo "/usr/lib/wsl/lib" > /etc/ld.so.conf.d/wsl.conf && ldconfig
+#17 CACHED
+
+#18 [ 8/21] COPY requirements_docker.txt .
+#18 CACHED
+
+#19 [10/21] RUN pip install --no-cache-dir pynvvideocodec==2.1.0
+#19 CACHED
+
+#20 [15/21] RUN pip install --no-cache-dir cmake ninja setuptools_scm --upgrade
+#20 CACHED
+
+#21 [16/21] RUN set -x &&     git clone --depth 1 https://github.com/vllm-project/vllm.git &&     cd vllm &&     git fetch --tags &&     git checkout v0.7.2 &&     python use_existing_torch.py &&     pip install --no-cache-dir -r requirements/build.txt &&     export CXXFLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" &&     export CMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" &&     export TORCH_CUDA_ARCH_LIST="12.0+PTX" &&     export NVCC_GENCODE="-gencode=arch=compute_120,code=sm_120" &&     export VLLM_FLASH_ATTN_VERSION=2 &&     export MAX_JOBS=6 && export NVCC_THREADS=2 && export CMAKE_BUILD_PARALLEL_LEVEL=6 &&     pip install --no-cache-dir --no-build-isolation -e . -v &&     cd .. && rm -rf vllm
+#21 0.207 + git clone --depth 1 https://github.com/vllm-project/vllm.git
+#21 0.210 Cloning into 'vllm'...
