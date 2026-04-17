@@ -313,6 +313,7 @@ def editing_node(state: PipelineState) -> PipelineState:
 
     try:
         from autonomous_trend_agent.editor.zero_copy_pipeline import ZeroCopyPipeline
+        from autonomous_trend_agent.captions.animated_captions import AnimatedCaptionEngine
 
         pipeline = ZeroCopyPipeline(
             target_width=config.get("target_resolution", (1080, 1920))[0],
@@ -320,6 +321,15 @@ def editing_node(state: PipelineState) -> PipelineState:
             batch_size=config.get("batch_size", 50),
             device=config.get("device", "cuda"),
         )
+        
+        caption_engine = None
+        if config.get("use_captions", True):
+            caption_style = config.get("caption_style", "tiktok")
+            try:
+                caption_engine = AnimatedCaptionEngine(style=caption_style, device=config.get("device", "cuda"))
+                logger.info(f"[Pipeline] Initialized AnimatedCaptionEngine with style: {caption_style}")
+            except Exception as e:
+                logger.error(f"[Pipeline] Failed to initialize AnimatedCaptionEngine: {e}")
 
         for i, moment in enumerate(moments[:config.get("num_shorts", 4)]):
             short_dir = shorts_dir / f"short_{i+1:02d}"
@@ -339,6 +349,7 @@ def editing_node(state: PipelineState) -> PipelineState:
                     end_time=moment.get("end_time", 30),
                     tracking_data=tracking_data,
                     transcript=transcript,
+                    caption_engine=caption_engine,
                 )
 
                 shorts_created.append({

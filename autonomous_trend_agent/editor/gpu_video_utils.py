@@ -127,7 +127,7 @@ def decode_video_native_stream(
     max_frames: Optional[int] = None
 ):
     """
-    Generator for True Zero-Copy Decode using PyNvVideoCodec.
+    Generator for True Zero-Copy Decode using PyNvVideoCodec 2.1.0.
     Yields: (tensor, info)
     """
     if not PYNV_AVAILABLE:
@@ -162,9 +162,11 @@ def decode_video_native_stream(
             if not raw_frames or len(raw_frames) == 0:
                 break
                 
-            # PyNvDecoder output is natively [C, H, W] due to RGBP mapping
+            # PyNvVideoCodec 2.1.0 natively implements DLPack. 
+            # Bypass legacy capsule abstractions and sync the stream.
             frame_tensor = torch.from_dlpack(raw_frames[0])
-            frame_tensor = frame_tensor.float() / 255.0
+            torch.cuda.current_stream().synchronize()
+            frame_tensor = frame_tensor.float().div_(255.0)
             
             yield frame_tensor.to(device), info
             

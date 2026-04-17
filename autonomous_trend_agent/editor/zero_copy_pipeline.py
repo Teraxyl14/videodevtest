@@ -257,6 +257,198 @@ class ZeroCopyPipeline:
         
         print(f"[ZeroCopy] Initialized: {target_width}x{target_height}, batch={batch_size}, deadband={deadband_pct}")
     
+    def process_segment(
+        self,
+        source_path: str,
+        output_path: str,
+        start_time: float,
+        end_time: float,
+        tracking_data: Dict,
+        transcript: Optional[Dict] = None,
+        caption_engine: Optional[object] = None,
+        progress_callback: Optional[callable] = None
+    ) -> bool:
+        """
+        Process a single viral segment: Cut with NVENC, shift timestamps, and reframe.
+        Uses 2026 SOTA Blackwell AV1 NVENC encoding for frame-accurate extraction.
+        """
+        import subprocess
+        import os
+        from pathlib import Path
+        
+        source_path_obj = Path(source_path)
+        output_path_obj = Path(output_path)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Create a temporary file for the cut segment
+        temp_cut_path = output_path_obj.with_suffix(".cut.mp4")
+        
+        duration = end_time - start_time
+        
+        print(f"[ZeroCopy] Cutting segment: {start_time:.2f}s to {end_time:.2f}s ({duration:.2f}s)")
+        
+        # 2026 SOTA Blackwell AV1 NVENC Command
+        # -ss must be BEFORE -i for fast seeking
+        # -tune hq is used instead of uhq due to known 10-bit macroblocking bug on SM_100
+        # -c:a copy ensures audio sync
+        
+        hours = int(start_time // 3600)
+        minutes = int((start_time % 3600) // 60)
+        secs = int(start_time % 60)
+        msecs = int((start_time - int(start_time)) * 1000)
+        formatted_start = f"{hours:02d}:{minutes:02d}:{secs:02d}.{msecs:03d}"
+        
+        hours_d = int(duration // 3600)
+        minutes_d = int((duration % 3600) // 60)
+        secs_d = int(duration % 60)
+        msecs_d = int((duration - int(duration)) * 1000)
+        formatted_duration = f"{hours_d:02d}:{minutes_d:02d}:{secs_d:02d}.{msecs_d:03d}"
+
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "cuda",
+            "-hwaccel_output_format", "cuda",
+            "-ss", formatted_start,
+            "-t", formatted_duration,
+            "-i", str(source_path_obj),
+            "-c:v", "av1_nvenc",
+            "-preset", "p7",
+            "-tune", "hq",
+            "-profile:v", "main10",
+            "-highbitdepth", "1",
+            "-bf", "4",
+            "-b_ref_mode", "middle",
+            "-rc-lookahead", "32",
+            "-rc", "vbr",
+            "-cq", "19",
+            "-b:v", "0",
+            "-c:a", "copy",
+            str(temp_cut_path)
+        ]
+        
+        try:
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, check=True)
+            print(f"[ZeroCopy] Successfully extracted segment to {temp_cut_path}")
+        except subprocess.CalledProcessError as e:
+            print(f"[ZeroCopy] FFmpeg Cut Error:\n{e.stderr}")
+            if temp_cut_path.exists():
+                temp_cut_path.unlink()
+            return False
+
+        # 2. Shift Tracking Data Timestamps
+        shifted_tracking_data = {"tracked_objects": []}
+        fps = tracking_data.get("fps", 30.0) # Fallback to 30 if missing
+        shifted_tracking_data["fps"] = fps
+        
+        # Calculate frame offset based on start time and fps
+        frame_offset = int(start_time * fps)
+        
+        if "tracked_objects" in tracking_data:
+            for obj in tracking_data["tracked_objects"]:
+                shifted_obj = {
+                    "id": obj["id"],
+                    "class_name": obj["class_name"],
+                    "trajectory": {}
+                }
+                for frame_idx_str, data in obj["trajectory"].items():
+                    frame_idx = int(frame_idx_str)
+                    if frame_idx >= frame_offset:
+                         new_frame_idx = frame_idx - frame_offset
+                         # Only keep tracking data that belongs to this cut segment
+                         # Assuming duration frames = duration * fps
+                         if new_frame_idx < int(duration * fps) + fps: # adding some padding
+                             shifted_obj["trajectory"][str(new_frame_idx)] = data
+                
+                if shifted_obj["trajectory"]:
+                    shifted_tracking_data["tracked_objects"].append(shifted_obj)
+        
+        # 3. Shift Transcript Timestamps
+        shifted_transcript = None
+        if transcript:
+            import copy
+            shifted_transcript = copy.deepcopy(transcript)
+            
+            # Shift segments
+            shifted_segments = []
+            for segment in shifted_transcript.get("segments", []):
+                # Check if segment overlaps with our cut
+                seg_start = segment.get("start", segment.get("start_time", 0.0))
+                seg_end = segment.get("end", segment.get("end_time", 0.0))
+                
+                if seg_start <= end_time and seg_end >= start_time:
+                    shifted_seg = copy.deepcopy(segment)
+                    # Shift and clamp
+                    shifted_seg["start"] = max(0.0, seg_start - start_time)
+                    shifted_seg["end"] = min(duration, seg_end - start_time)
+                    
+                    if "start_time" in shifted_seg:
+                        shifted_seg["start_time"] = shifted_seg["start"]
+                    if "end_time" in shifted_seg:
+                        shifted_seg["end_time"] = shifted_seg["end"]
+                        
+                    # Shift words within segment
+                    shifted_words = []
+                    for word in shifted_seg.get("words", []):
+                         w_start = word.get("start", word.get("start_time", 0.0))
+                         w_end = word.get("end", word.get("end_time", 0.0))
+                         
+                         if w_start <= end_time and w_end >= start_time:
+                             shifted_word = copy.deepcopy(word)
+                             shifted_word["start"] = max(0.0, w_start - start_time)
+                             shifted_word["end"] = min(duration, w_end - start_time)
+                             if "start_time" in shifted_word:
+                                 shifted_word["start_time"] = shifted_word["start"]
+                             if "end_time" in shifted_word:
+                                 shifted_word["end_time"] = shifted_word["end"]
+                             shifted_words.append(shifted_word)
+                    
+                    shifted_seg["words"] = shifted_words
+                    shifted_segments.append(shifted_seg)
+            
+            shifted_transcript["segments"] = shifted_segments
+            
+            # Shift global words list if present (Parakeet/WhisperX flat format)
+            if "words" in shifted_transcript:
+                shifted_global_words = []
+                for word in shifted_transcript["words"]:
+                    w_start = word.get("start", word.get("start_time", 0.0))
+                    w_end = word.get("end", word.get("end_time", 0.0))
+                    if w_start <= end_time and w_end >= start_time:
+                         shifted_word = copy.deepcopy(word)
+                         shifted_word["start"] = max(0.0, w_start - start_time)
+                         shifted_word["end"] = min(duration, w_end - start_time)
+                         if "start_time" in shifted_word:
+                             shifted_word["start_time"] = shifted_word["start"]
+                         if "end_time" in shifted_word:
+                             shifted_word["end_time"] = shifted_word["end"]
+                         shifted_global_words.append(shifted_word)
+                shifted_transcript["words"] = shifted_global_words
+
+        # 4. Run Reframing on the cut segment
+        try:
+            success = self.reframe_with_tracking(
+                video_path=str(temp_cut_path),
+                tracking_data=shifted_tracking_data,
+                output_path=output_path,
+                transcript=shifted_transcript,
+                caption_engine=caption_engine,
+                progress_callback=progress_callback
+            )
+            
+            if success:
+                # Clean up temp cut file
+                if temp_cut_path.exists():
+                     temp_cut_path.unlink()
+                return True
+            else:
+                 print(f"[ZeroCopy] Reframing failed for {temp_cut_path}")
+                 return False
+                 
+        except Exception as e:
+            import traceback
+            print(f"[ZeroCopy] Exception during reframe:\n{traceback.format_exc()}")
+            return False
+
     def reframe_with_tracking(
         self,
         video_path: str,

@@ -3,18 +3,18 @@ Pipeline Module
 Unified orchestration for short-form content generation
 """
 
-from .orchestrator import (
-    PipelineOrchestrator,
+from .langgraph_pipeline import (
+    PipelineState,
     PipelineConfig,
-    PipelineResult,
-    ProgressCallback,
+    build_pipeline,
+    create_pipeline,
     run_pipeline
 )
 
 __all__ = [
-    'PipelineOrchestrator',
+    'PipelineState',
     'PipelineConfig', 
-    'PipelineResult',
-    'ProgressCallback',
+    'build_pipeline',
+    'create_pipeline',
     'run_pipeline'
 ]
